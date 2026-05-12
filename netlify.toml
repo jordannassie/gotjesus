@@ -6,15 +6,24 @@
   NODE_VERSION = "20"
 
 # Netlify automatically installs @netlify/plugin-nextjs when a Next.js project
-# is detected. That plugin converts App Router API routes into Netlify Functions,
-# which is required for /api/generate-video and /api/finalize-video to work.
+# is detected. That plugin converts App Router API routes into Netlify Functions.
 
-# ── Background Function config ────────────────────────────────────────────────
-# process-reel-background runs for up to 15 minutes (Netlify background limit).
-# ffmpeg-static is marked external so its binary file is preserved at a known
-# path rather than being bundled by esbuild (which would strip the binary).
+# ── Background Function: save-reel-background ─────────────────────────────────
+# Invoked by POST /api/save-reel. Downloads the Kie video, uploads to Supabase
+# Storage, and optionally posts via Blotato. Runs for up to 15 minutes.
+[functions."save-reel-background"]
+  # No external_node_modules needed — @supabase/supabase-js is bundled normally.
+
+# ── Scheduled Background Function: daily-scheduler-background ─────────────────
+# Runs at 13:00 UTC every day (= 5 AM PST / 6 AM PDT).
+# Generates branded reels for each posting slot and schedules them in Blotato.
+# Runs for up to 15 minutes as a background function.
+[functions."daily-scheduler-background"]
+  schedule = "0 13 * * *"
+
+# ── Background Function: process-reel-background (PRESERVED — INACTIVE) ───────
+# Old FFmpeg end card pipeline. Not used in the active flow.
+# Preserved in case Kie-native endings need to be replaced.
 [functions."process-reel-background"]
   external_node_modules = ["ffmpeg-static"]
-  # Bundle the official end card image with this function so FFmpeg can use it
-  # directly from disk without a network fetch on every generation.
   included_files = ["public/gotjesus-endcard.png"]

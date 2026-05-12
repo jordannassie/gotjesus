@@ -9,6 +9,15 @@
  *
  * Every post uses GOT_JESUS_DEFAULT_SOCIAL_CAPTION from src/lib/social-caption.ts.
  * Do not pass a different caption unless that constant has been explicitly changed.
+ *
+ * POSTING PATHS:
+ *   MANUAL (Auto Post ON):
+ *     After reel is saved → uploadMedia(savedVideoUrl) → publishToAll(mediaId, platforms)
+ *     No scheduledTime — posts immediately.
+ *
+ *   SCHEDULED (daily-scheduler-background):
+ *     Same uploadMedia → publishToAll() flow, but pass scheduledTime (ISO 8601 UTC).
+ *     Convert Pacific posting_times to UTC via pacificTimeToUTCISO() in the scheduler.
  */
 
 import { GOT_JESUS_DEFAULT_SOCIAL_CAPTION } from "@/lib/social-caption";
@@ -19,11 +28,6 @@ const BLOTATO_BASE_URL = "https://backend.blotato.com";
 
 export type BlotatoPlatform = "instagram" | "youtube" | "tiktok";
 
-export interface BlotatoPostTarget {
-  platform: BlotatoPlatform;
-  accountId: string;
-}
-
 export interface BlotatoUploadResponse {
   mediaId: string;
 }
@@ -33,14 +37,19 @@ export interface BlotatoPublishRequest {
   accountId: string;
   platform: BlotatoPlatform;
   caption: string;
+  /** ISO 8601 UTC datetime. Omit for immediate posting. */
+  scheduledTime?: string;
+}
+
+export interface BlotatoPublishResponse {
+  /** The Blotato post / submission ID returned after scheduling. */
+  id?: string;
+  postId?: string;
+  submissionId?: string;
 }
 
 // ─── Connection check ─────────────────────────────────────────────────────────
 
-/**
- * Returns true if all required Blotato env vars are present.
- * Safe to call from server components or API routes.
- */
 export function isBlotatoConnected(): boolean {
   return Boolean(
     process.env.BLOTATO_API_KEY &&
@@ -50,10 +59,6 @@ export function isBlotatoConnected(): boolean {
   );
 }
 
-/**
- * Returns the configured account IDs, keyed by platform.
- * Only includes platforms that have an account ID set.
- */
 export function getBlotatoAccountIds(): Partial<Record<BlotatoPlatform, string>> {
   const ids: Partial<Record<BlotatoPlatform, string>> = {};
   if (process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID)
@@ -69,11 +74,10 @@ export function getBlotatoAccountIds(): Partial<Record<BlotatoPlatform, string>>
 
 function getApiKey(): string {
   const key = process.env.BLOTATO_API_KEY;
-  if (!key) {
+  if (!key)
     throw new Error(
-      "BLOTATO_API_KEY is not set. Add it to .env.local or your Netlify environment variables."
+      "BLOTATO_API_KEY is not set. Add it to your Netlify environment variables."
     );
-  }
   return key;
 }
 
@@ -85,34 +89,11 @@ function authHeaders(): HeadersInit {
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
-//
-// POSTING PATHS — two distinct flows share this API client:
-//
-//   MANUAL POST (Step 6):
-//     User clicks "Post Now" after a final reel is ready.
-//     Flow: uploadMedia(finalVideoUrl) → publishToAll(mediaId, platforms, caption)
-//     No scheduledTime — post immediately.
-//
-//   SCHEDULED AUTOMATIC POST (Step 7):
-//     Triggered by a cron job or Netlify scheduled function.
-//     Reads posting_times from gotjesus_posting_settings (Pacific Time).
-//     Converts each HH:MM time to a UTC ISO timestamp via Intl.DateTimeFormat.
-//     Flow: uploadMedia(finalVideoUrl) → publishToAll(mediaId, platforms, caption, scheduledTime)
-//     Blotato's scheduledTime field accepts an ISO 8601 UTC datetime string.
-//
-//   PLATFORM HANDLING:
-//     publishToAll() already filters platforms by what is enabled in env vars.
-//     When the full pipeline is live, also filter by the user's platform toggles
-//     from posting settings (instagramEnabled, tiktokEnabled, youtubeEnabled).
 
 /**
- * Upload a video by URL to Blotato's media library.
- * Returns the Blotato mediaId to use when publishing posts.
- *
- * TODO (Step 6): Confirm exact Blotato upload endpoint path and request shape.
- *   Manual post path: call this immediately after final reel is ready, then
- *   call publishToAll(mediaId, platforms) — caption defaults to GOT_JESUS_DEFAULT_SOCIAL_CAPTION.
- *   Scheduled post path: same flow from the scheduled automation function.
+ * Upload a video by public URL to Blotato's media library.
+ * Returns the Blotato mediaId used when publishing posts.
+ * Pass the permanent Supabase Storage URL — not the temporary Kie URL.
  */
 export async function uploadMedia(videoUrl: string): Promise<string> {
   const response = await fetch(`${BLOTATO_BASE_URL}/api/media/upload`, {
@@ -132,13 +113,12 @@ export async function uploadMedia(videoUrl: string): Promise<string> {
 
 /**
  * Publish a video to a single platform via Blotato.
+ * Returns the Blotato submission ID for tracking post status.
  *
- * TODO (Step 6): Confirm Blotato publish endpoint path and full request shape.
- *   Add optional `scheduledTime?: string` (ISO 8601 UTC) to BlotatoPublishRequest
- *   when wiring up the scheduled automatic posting flow (Step 7).
- *   For the manual post path, omit scheduledTime — post immediately.
+ * For immediate posting: omit scheduledTime.
+ * For scheduled posting: pass scheduledTime as ISO 8601 UTC string.
  */
-export async function publishPost(req: BlotatoPublishRequest): Promise<void> {
+export async function publishPost(req: BlotatoPublishRequest): Promise<string> {
   const response = await fetch(`${BLOTATO_BASE_URL}/api/posts/publish`, {
     method: "POST",
     headers: authHeaders(),
@@ -147,6 +127,7 @@ export async function publishPost(req: BlotatoPublishRequest): Promise<void> {
       accountId: req.accountId,
       platform: req.platform,
       caption: req.caption,
+      ...(req.scheduledTime ? { scheduledTime: req.scheduledTime } : {}),
     }),
   });
 
@@ -156,42 +137,45 @@ export async function publishPost(req: BlotatoPublishRequest): Promise<void> {
       `Blotato publishPost [${req.platform}] HTTP ${response.status}: ${text}`
     );
   }
+
+  const json = (await response.json()) as BlotatoPublishResponse;
+  // Try common Blotato response field names for the submission ID
+  return json.id ?? json.postId ?? json.submissionId ?? "unknown";
 }
 
 /**
- * Publish a completed video to all requested platforms in parallel.
- * Skips any platform whose accountId is missing in the env.
+ * Upload media and publish to all requested platforms in parallel.
+ * Returns a map of platform → Blotato submission ID.
  *
- * Caption always defaults to GOT_JESUS_DEFAULT_SOCIAL_CAPTION.
- * Pass a different value only if the default is explicitly overridden.
- *
- * TODO (Step 6): Wire into the finalization pipeline after end card assembly.
- *   Also cross-check against the user's platform toggles from posting settings
- *   (instagramEnabled, tiktokEnabled, youtubeEnabled) before posting.
- *   Call: publishToAll(mediaId, enabledPlatforms)  — caption defaults automatically.
- *
- * TODO (Step 7): Add optional `scheduledTime?: string` parameter.
- *   Convert posting_times (HH:MM Pacific) to ISO 8601 UTC and pass to publishPost().
- *   Use: new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', ... })
- *   to handle Pacific daylight-saving time correctly.
+ * Caption defaults to GOT_JESUS_DEFAULT_SOCIAL_CAPTION.
+ * Pass scheduledTime (ISO 8601 UTC) for scheduled posts; omit for immediate.
+ * Skips any platform whose account ID is not configured in env vars.
+ * Skips any platform not in the provided platforms array.
  */
 export async function publishToAll(
-  mediaId: string,
+  videoUrl: string,
   platforms: BlotatoPlatform[],
-  caption: string = GOT_JESUS_DEFAULT_SOCIAL_CAPTION
-): Promise<void> {
+  caption: string = GOT_JESUS_DEFAULT_SOCIAL_CAPTION,
+  scheduledTime?: string
+): Promise<Partial<Record<BlotatoPlatform, string>>> {
   const accountIds = getBlotatoAccountIds();
+  const mediaId = await uploadMedia(videoUrl);
+
+  const results: Partial<Record<BlotatoPlatform, string>> = {};
 
   const tasks = platforms
     .filter((p) => accountIds[p])
-    .map((p) =>
-      publishPost({
+    .map(async (p) => {
+      const submissionId = await publishPost({
         mediaId,
         accountId: accountIds[p]!,
         platform: p,
         caption,
-      })
-    );
+        scheduledTime,
+      });
+      results[p] = submissionId;
+    });
 
   await Promise.all(tasks);
+  return results;
 }

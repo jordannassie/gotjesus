@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { PostingSettings } from "@/lib/posting-settings";
+import type { Reel } from "@/lib/reels-db";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,8 @@ type GenerationState =
   | "success"
   | "failed";
 
+type SaveState = "idle" | "saving" | "posting" | "complete" | "failed";
+
 interface VideoEngineProps {
   blotatoConnected: boolean;
   promptSummary: string;
@@ -24,21 +27,42 @@ interface VideoEngineProps {
 
 // ─── Status labels ─────────────────────────────────────────────────────────────
 
-function getProgressLabel(genState: GenerationState): string {
+function getProgressLabel(
+  genState: GenerationState,
+  saveState: SaveState
+): string {
   if (genState === "submitting") return "Submitting to Seedance...";
-  if (
-    genState === "waiting" ||
-    genState === "queuing" ||
-    genState === "generating"
-  )
-    return "Generating 8-second reel with branded ending...";
+  if (["waiting", "queuing", "generating"].includes(genState))
+    return "Generating branded 8-second reel...";
+  if (saveState === "saving") return "Saving video to library...";
+  if (saveState === "posting") return "Posting to social platforms...";
   return "";
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 const POLL_INTERVAL_MS = 6000;
 const MAX_GEN_POLLS = 120; // 12 min
+const MAX_SAVE_POLLS = 60; // 6 min
 
-// Default posting times keyed by posts-per-day count
+const STATUS_COLORS: Record<string, string> = {
+  generating: "text-sky-400",
+  saving: "text-sky-400",
+  ready: "text-emerald-400",
+  posting: "text-amber-400",
+  scheduled: "text-violet-400",
+  posted: "text-emerald-400",
+  failed: "text-red-400",
+};
+
 const DEFAULT_TIMES: Record<number, string[]> = {
   1: ["12:00"],
   2: ["09:00", "19:00"],
@@ -47,7 +71,7 @@ const DEFAULT_TIMES: Record<number, string[]> = {
   5: ["08:00", "11:00", "14:00", "17:00", "20:00"],
 };
 
-// ─── Toggle ───────────────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function Toggle({
   checked,
@@ -77,13 +101,121 @@ function Toggle({
   );
 }
 
-// ─── Spinner ──────────────────────────────────────────────────────────────────
-
 function Spinner({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3">
       <span className="inline-block w-4 h-4 border-2 border-neutral-600 border-t-white rounded-full animate-spin shrink-0" />
       <span className="text-sm text-neutral-400">{label}</span>
+    </div>
+  );
+}
+
+function PlatformBadge({
+  label,
+  active,
+}: {
+  label: string;
+  active: boolean;
+}) {
+  if (!active) return null;
+  return (
+    <span className="inline-block px-2 py-0.5 rounded text-xs font-medium border border-neutral-700 bg-neutral-800 text-neutral-300">
+      {label}
+    </span>
+  );
+}
+
+// ─── Reel Library Card ────────────────────────────────────────────────────────
+
+function ReelCard({
+  reel,
+  onDelete,
+  deleting,
+}: {
+  reel: Reel;
+  onDelete: (id: string) => void;
+  deleting: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const displayUrl = reel.saved_video_url ?? reel.kie_video_url;
+  const statusColor = STATUS_COLORS[reel.status] ?? "text-neutral-400";
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-xs font-semibold ${statusColor}`}>
+              {reel.status.charAt(0).toUpperCase() + reel.status.slice(1)}
+            </span>
+            <span className="text-xs text-neutral-600">·</span>
+            <span className="text-xs text-neutral-500">
+              {reel.generation_source === "scheduled" ? "Scheduled" : "Manual"}
+            </span>
+            <span className="text-xs text-neutral-600">·</span>
+            <span className="text-xs text-neutral-500">
+              {formatDate(reel.created_at)}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <PlatformBadge label="Instagram" active={reel.instagram_enabled} />
+            <PlatformBadge label="TikTok" active={reel.tiktok_enabled} />
+            <PlatformBadge label="YouTube" active={reel.youtube_enabled} />
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onDelete(reel.id)}
+          disabled={deleting}
+          className="shrink-0 text-xs text-neutral-600 hover:text-red-400 transition-colors duration-150 disabled:opacity-40"
+        >
+          {deleting ? "..." : "Delete"}
+        </button>
+      </div>
+
+      {reel.scheduled_for && (
+        <p className="text-xs text-violet-400/80">
+          Scheduled for {formatDate(reel.scheduled_for)}
+        </p>
+      )}
+
+      {reel.error_message && (
+        <p className="text-xs text-red-400/80 leading-relaxed">
+          {reel.error_message}
+        </p>
+      )}
+
+      {displayUrl && (
+        <>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-xs text-neutral-500 hover:text-neutral-300 text-left transition-colors"
+          >
+            {expanded ? "Hide video ↑" : "Show video ↓"}
+          </button>
+          {expanded && (
+            <div className="w-full rounded-lg overflow-hidden border border-neutral-700">
+              <div
+                className="relative w-full"
+                style={{ aspectRatio: "9 / 16" }}
+              >
+                <video
+                  src={displayUrl}
+                  controls
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-contain bg-black"
+                />
+              </div>
+            </div>
+          )}
+          {reel.saved_video_url && (
+            <p className="text-xs text-neutral-700 font-mono break-all leading-relaxed">
+              {reel.saved_video_url}
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -97,13 +229,19 @@ export default function VideoEngine({
   resolution,
   initialSettings,
 }: VideoEngineProps) {
-  // Generation state
+  // ── Generation state ───────────────────────────────────────────────────────
   const [genState, setGenState] = useState<GenerationState>("idle");
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [kieVideoUrl, setKieVideoUrl] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
-  // Social posting — initialized from saved settings
+  // ── Save / post state ──────────────────────────────────────────────────────
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [reelId, setReelId] = useState<string | null>(null);
+  const [savedVideoUrl, setSavedVideoUrl] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // ── Social posting — initialized from saved settings ───────────────────────
   const [autoPost, setAutoPost] = useState(initialSettings.autoPostEnabled);
   const [postInstagram, setPostInstagram] = useState(
     initialSettings.instagramEnabled
@@ -113,42 +251,87 @@ export default function VideoEngine({
     initialSettings.youtubeEnabled
   );
 
-  // Schedule settings — initialized from saved settings
+  // ── Schedule settings ──────────────────────────────────────────────────────
   const [postsPerDay, setPostsPerDay] = useState(initialSettings.postsPerDay);
   const [postingTimes, setPostingTimes] = useState<string[]>(
     initialSettings.postingTimes.length > 0
       ? initialSettings.postingTimes
-      : DEFAULT_TIMES[initialSettings.postsPerDay] ?? DEFAULT_TIMES[3]
+      : (DEFAULT_TIMES[initialSettings.postsPerDay] ?? DEFAULT_TIMES[3])
   );
 
-  // Schedule save state
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  // ── Schedule save state ────────────────────────────────────────────────────
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleSaved, setScheduleSaved] = useState(false);
+  const [scheduleSaveError, setScheduleSaveError] = useState<string | null>(
+    null
+  );
 
-  // Copy prompt state
+  // ── Reel library ───────────────────────────────────────────────────────────
+  const [reels, setReels] = useState<Reel[]>([]);
+  const [reelsLoading, setReelsLoading] = useState(false);
+  const [reelDeleteId, setReelDeleteId] = useState<string | null>(null);
+
+  // ── UI state ───────────────────────────────────────────────────────────────
   const [promptCopied, setPromptCopied] = useState(false);
-
-  // Advanced section
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // ── Refs ───────────────────────────────────────────────────────────────────
   const genTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const genPollCount = useRef(0);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savePollCount = useRef(0);
+
+  // ─── Reel library ──────────────────────────────────────────────────────────
+
+  const fetchReels = useCallback(async () => {
+    setReelsLoading(true);
+    try {
+      const res = await fetch("/api/reels");
+      if (res.ok) {
+        const data = (await res.json()) as Reel[];
+        setReels(data);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setReelsLoading(false);
+    }
+  }, []);
+
+  // Fetch reel library on mount
+  useEffect(() => {
+    fetchReels();
+  }, [fetchReels]);
+
+  const handleDeleteReel = useCallback(
+    async (id: string) => {
+      setReelDeleteId(id);
+      try {
+        await fetch(`/api/reels?reelId=${id}`, { method: "DELETE" });
+        await fetchReels();
+      } catch {
+        // ignore
+      } finally {
+        setReelDeleteId(null);
+      }
+    },
+    [fetchReels]
+  );
 
   // ─── Posts-per-day change ──────────────────────────────────────────────────
 
   const handlePostsPerDayChange = useCallback((n: number) => {
     setPostsPerDay(n);
     setPostingTimes(DEFAULT_TIMES[n] ?? DEFAULT_TIMES[3]);
-    setSaved(false);
+    setScheduleSaved(false);
   }, []);
 
   // ─── Save schedule ─────────────────────────────────────────────────────────
 
   const handleSaveSchedule = useCallback(async () => {
-    setSaving(true);
-    setSaved(false);
-    setSaveError(null);
+    setScheduleSaving(true);
+    setScheduleSaved(false);
+    setScheduleSaveError(null);
     try {
       const res = await fetch("/api/posting-settings", {
         method: "PATCH",
@@ -167,12 +350,14 @@ export default function VideoEngine({
         const data = (await res.json()) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      setScheduleSaved(true);
+      setTimeout(() => setScheduleSaved(false), 2500);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed.");
+      setScheduleSaveError(
+        err instanceof Error ? err.message : "Save failed."
+      );
     } finally {
-      setSaving(false);
+      setScheduleSaving(false);
     }
   }, [
     autoPost,
@@ -201,6 +386,135 @@ export default function VideoEngine({
     setPromptCopied(true);
     setTimeout(() => setPromptCopied(false), 2000);
   }, [fullPrompt]);
+
+  // ─── Save polling ──────────────────────────────────────────────────────────
+
+  const stopSavePoll = useCallback(() => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+  }, []);
+
+  const pollSave = useCallback(
+    async (id: string) => {
+      if (savePollCount.current >= MAX_SAVE_POLLS) {
+        stopSavePoll();
+        setSaveState("failed");
+        setSaveError("Save timed out after 6 minutes.");
+        return;
+      }
+      savePollCount.current += 1;
+
+      try {
+        const res = await fetch(`/api/save-reel?reelId=${id}`);
+        const data = (await res.json()) as {
+          status?: string;
+          saved_video_url?: string | null;
+          error_message?: string | null;
+        };
+
+        const status = data.status ?? "saving";
+
+        if (
+          status === "ready" ||
+          status === "posted" ||
+          status === "scheduled"
+        ) {
+          stopSavePoll();
+          setSaveState("complete");
+          setSavedVideoUrl(data.saved_video_url ?? null);
+          void fetchReels();
+          return;
+        }
+
+        if (status === "failed") {
+          stopSavePoll();
+          setSaveState("failed");
+          setSaveError(
+            data.error_message ?? "Save failed on server."
+          );
+          return;
+        }
+
+        if (status === "posting") setSaveState("posting");
+
+        saveTimer.current = setTimeout(
+          () => void pollSave(id),
+          POLL_INTERVAL_MS
+        );
+      } catch (err) {
+        stopSavePoll();
+        setSaveState("failed");
+        setSaveError(err instanceof Error ? err.message : "Poll error.");
+      }
+    },
+    [stopSavePoll, fetchReels]
+  );
+
+  // ─── Save reel after Kie generation ───────────────────────────────────────
+
+  const handleSaveReel = useCallback(
+    async (kieUrl: string) => {
+      stopSavePoll();
+      setSaveState("saving");
+      setReelId(null);
+      setSavedVideoUrl(null);
+      setSaveError(null);
+      savePollCount.current = 0;
+
+      const enabledPlatforms: string[] = [];
+      if (autoPost && postInstagram) enabledPlatforms.push("instagram");
+      if (autoPost && postTiktok) enabledPlatforms.push("tiktok");
+      if (autoPost && postYoutube) enabledPlatforms.push("youtube");
+
+      try {
+        const res = await fetch("/api/save-reel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kieVideoUrl: kieUrl,
+            kieTaskId: taskId,
+            autoPost,
+            platforms: enabledPlatforms,
+          }),
+        });
+        const data = (await res.json()) as {
+          reelId?: string;
+          error?: string;
+        };
+
+        if (!res.ok || data.error) {
+          setSaveState("failed");
+          setSaveError(data.error ?? "Failed to start save.");
+          return;
+        }
+
+        const id = data.reelId!;
+        setReelId(id);
+        saveTimer.current = setTimeout(() => void pollSave(id), POLL_INTERVAL_MS);
+      } catch (err) {
+        setSaveState("failed");
+        setSaveError(err instanceof Error ? err.message : "Save error.");
+      }
+    },
+    [
+      autoPost,
+      postInstagram,
+      postTiktok,
+      postYoutube,
+      taskId,
+      pollSave,
+      stopSavePoll,
+    ]
+  );
+
+  // Auto-trigger save when Kie generation completes
+  useEffect(() => {
+    if (genState === "success" && kieVideoUrl && saveState === "idle") {
+      void handleSaveReel(kieVideoUrl);
+    }
+  }, [genState, kieVideoUrl, saveState, handleSaveReel]);
 
   // ─── Generation polling ────────────────────────────────────────────────────
 
@@ -242,7 +556,7 @@ export default function VideoEngine({
         if (raw === "success") {
           stopGenPoll();
           setGenState("success");
-          setVideoUrl(data.videoUrl ?? null);
+          setKieVideoUrl(data.videoUrl ?? null);
           return;
         }
 
@@ -254,7 +568,7 @@ export default function VideoEngine({
         }
 
         setGenState(raw as GenerationState);
-        genTimer.current = setTimeout(() => pollGen(id), POLL_INTERVAL_MS);
+        genTimer.current = setTimeout(() => void pollGen(id), POLL_INTERVAL_MS);
       } catch (err) {
         stopGenPoll();
         setGenState("failed");
@@ -266,11 +580,17 @@ export default function VideoEngine({
 
   const handleGenerate = useCallback(async () => {
     stopGenPoll();
+    stopSavePoll();
     setGenState("submitting");
     setTaskId(null);
-    setVideoUrl(null);
+    setKieVideoUrl(null);
     setGenError(null);
+    setSaveState("idle");
+    setSavedVideoUrl(null);
+    setSaveError(null);
+    setReelId(null);
     genPollCount.current = 0;
+    savePollCount.current = 0;
 
     try {
       const res = await fetch("/api/generate-video", { method: "POST" });
@@ -285,12 +605,12 @@ export default function VideoEngine({
       const id = data.taskId!;
       setTaskId(id);
       setGenState("waiting");
-      genTimer.current = setTimeout(() => pollGen(id), POLL_INTERVAL_MS);
+      genTimer.current = setTimeout(() => void pollGen(id), POLL_INTERVAL_MS);
     } catch (err) {
       setGenState("failed");
       setGenError(err instanceof Error ? err.message : "Submit error.");
     }
-  }, [pollGen, stopGenPoll]);
+  }, [pollGen, stopGenPoll, stopSavePoll]);
 
   // ─── Derived ───────────────────────────────────────────────────────────────
 
@@ -300,19 +620,22 @@ export default function VideoEngine({
     "queuing",
     "generating",
   ].includes(genState);
+  const saveRunning = ["saving", "posting"].includes(saveState);
+  const isRunning = genRunning || saveRunning;
+  const progressLabel = getProgressLabel(genState, saveState);
 
-  const progressLabel = getProgressLabel(genState);
+  // Show the saved Supabase URL if available, fall back to temp Kie URL
+  const displayVideoUrl = savedVideoUrl ?? kieVideoUrl;
+  const showResult =
+    saveState === "complete" || (genState === "success" && kieVideoUrl !== null);
 
   const statusRows = [
     { label: "Kie.ai Seedance 2.0", status: "Connected", active: true },
-    {
-      label: "Got Jesus? Branded Ending",
-      status: "Active",
-      active: true,
-    },
+    { label: "Got Jesus Branded Ending", status: "Active", active: true },
+    { label: "Supabase Video Library", status: "Active", active: true },
     {
       label: "Blotato Social Posting",
-      status: blotatoConnected ? "Connected" : "Not Connected Yet",
+      status: blotatoConnected ? "Connected" : "Not Connected",
       active: blotatoConnected,
     },
   ];
@@ -356,16 +679,16 @@ export default function VideoEngine({
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={genRunning}
+          disabled={isRunning}
           className="w-full py-3 px-6 rounded-lg bg-white text-black text-sm font-semibold tracking-wide hover:bg-neutral-200 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {genRunning ? "In Progress..." : "Generate Video"}
+          {isRunning ? "In Progress..." : "Generate Video"}
         </button>
 
         {/* Progress spinner */}
-        {genRunning && progressLabel && <Spinner label={progressLabel} />}
+        {isRunning && progressLabel && <Spinner label={progressLabel} />}
 
-        {/* Error */}
+        {/* Generation error */}
         {genState === "failed" && genError && (
           <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
             <p className="text-xs text-red-400 leading-relaxed">
@@ -377,21 +700,34 @@ export default function VideoEngine({
           </div>
         )}
 
-        {/* Debug task ID */}
+        {/* Save / post error */}
+        {saveState === "failed" && saveError && (
+          <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
+            <p className="text-xs text-red-400 leading-relaxed">
+              <span className="font-semibold text-red-300">Save failed: </span>
+              {saveError}
+            </p>
+          </div>
+        )}
+
+        {/* Debug IDs */}
         {taskId && (
-          <p className="text-xs text-neutral-700 font-mono">task: {taskId}</p>
+          <p className="text-xs text-neutral-700 font-mono">
+            task: {taskId}
+            {reelId ? ` · reel: ${reelId}` : ""}
+          </p>
         )}
       </div>
 
       {/* ── Final video result ── */}
-      {genState === "success" && videoUrl && (
+      {showResult && displayVideoUrl && (
         <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold tracking-wide text-white">
               Final Video
             </h2>
             <span className="text-xs font-medium text-emerald-500">
-              Final video ready
+              {saveState === "complete" ? "Saved to library" : "Video ready"}
             </span>
           </div>
 
@@ -399,7 +735,7 @@ export default function VideoEngine({
           <div className="w-full rounded-xl overflow-hidden border border-neutral-700">
             <div className="relative w-full" style={{ aspectRatio: "9 / 16" }}>
               <video
-                src={videoUrl}
+                src={displayVideoUrl}
                 controls
                 autoPlay
                 loop
@@ -409,31 +745,42 @@ export default function VideoEngine({
             </div>
           </div>
 
-          {/* Test mode note */}
-          <div className="rounded-lg border border-sky-900/50 bg-sky-950/20 px-4 py-3">
-            <p className="text-xs text-sky-400/80 leading-relaxed">
-              <span className="font-semibold text-sky-300">
-                Testing Kie-native branded ending.{" "}
-              </span>
-              Seedance generated this 8-second video with the Got Jesus end
-              card as the requested final frame.
-            </p>
-          </div>
-
-          {/* Auto Post eligibility note */}
-          {autoPost && blotatoConnected && (
-            <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3">
-              <p className="text-xs text-amber-400/80 leading-relaxed">
-                Auto Post is ON — this reel is eligible to be sent to selected
-                social platforms. Posting integration coming in the next step.
+          {/* Status note */}
+          {saveState === "complete" && savedVideoUrl ? (
+            <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/20 px-4 py-3">
+              <p className="text-xs text-emerald-400/80 leading-relaxed">
+                <span className="font-semibold text-emerald-300">
+                  Saved to Supabase.{" "}
+                </span>
+                This reel is permanently stored and visible in the video library
+                below.
+                {autoPost && blotatoConnected && (
+                  <span>
+                    {" "}
+                    Auto Post is ON — posting to enabled platforms via Blotato.
+                  </span>
+                )}
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-sky-900/50 bg-sky-950/20 px-4 py-3">
+              <p className="text-xs text-sky-400/80 leading-relaxed">
+                <span className="font-semibold text-sky-300">
+                  Kie-native branded ending.{" "}
+                </span>
+                Seedance generated this 8-second reel with the Got Jesus end
+                card as the final frame.
+                {saveRunning && " Saving to permanent library..."}
               </p>
             </div>
           )}
 
-          {/* URL debug */}
-          <p className="text-xs text-neutral-700 font-mono break-all">
-            {videoUrl}
-          </p>
+          {/* Saved URL debug */}
+          {savedVideoUrl && (
+            <p className="text-xs text-neutral-700 font-mono break-all">
+              {savedVideoUrl}
+            </p>
+          )}
         </div>
       )}
 
@@ -445,7 +792,7 @@ export default function VideoEngine({
           </h2>
           <p className="text-xs text-neutral-500">
             {blotatoConnected
-              ? "Blotato connected. Auto-post is off by default."
+              ? "Blotato connected. Enable Auto Post to publish reels automatically."
               : "Add Blotato env vars to enable social posting."}
           </p>
         </div>
@@ -456,14 +803,14 @@ export default function VideoEngine({
             <div className="flex flex-col gap-0.5">
               <span className="text-sm font-medium text-white">Auto Post</span>
               <span className="text-xs text-neutral-500">
-                Post automatically when final reel is ready
+                Post to social platforms when a reel is generated
               </span>
             </div>
             <Toggle
               checked={autoPost}
               onChange={() => {
                 setAutoPost((v) => !v);
-                setSaved(false);
+                setScheduleSaved(false);
               }}
               disabled={!blotatoConnected}
             />
@@ -502,7 +849,7 @@ export default function VideoEngine({
                 checked={checked}
                 onChange={() => {
                   set((v) => !v);
-                  setSaved(false);
+                  setScheduleSaved(false);
                 }}
                 disabled={!blotatoConnected}
               />
@@ -527,7 +874,8 @@ export default function VideoEngine({
               Automatic Posting Schedule
             </h3>
             <p className="text-xs text-neutral-500">
-              Configure how often and when reels are posted automatically.
+              The daily scheduler generates and posts reels at the configured
+              times.
             </p>
           </div>
 
@@ -565,7 +913,7 @@ export default function VideoEngine({
                     const updated = [...postingTimes];
                     updated[idx] = e.target.value;
                     setPostingTimes(updated);
-                    setSaved(false);
+                    setScheduleSaved(false);
                   }}
                   className="text-sm text-white bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1 outline-none focus:ring-1 focus:ring-neutral-600 [color-scheme:dark] cursor-pointer"
                 />
@@ -573,38 +921,68 @@ export default function VideoEngine({
             ))}
           </div>
 
-          {/* Timezone note */}
           <p className="text-xs text-neutral-600 px-1">
             All automatic posting times use Pacific Time
-            (America/Los_Angeles).
+            (America/Los_Angeles). The daily scheduler runs at 5 AM PT.
           </p>
 
           {/* Save button */}
           <button
             type="button"
             onClick={handleSaveSchedule}
-            disabled={saving}
+            disabled={scheduleSaving}
             className="w-full py-2.5 px-6 rounded-lg border border-neutral-700 bg-neutral-900 text-sm font-medium text-white hover:bg-neutral-800 hover:border-neutral-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saving
+            {scheduleSaving
               ? "Saving..."
-              : saved
+              : scheduleSaved
               ? "Schedule saved ✓"
               : "Save Posting Schedule"}
           </button>
 
-          {saveError && (
-            <p className="text-xs text-red-400 px-1">{saveError}</p>
+          {scheduleSaveError && (
+            <p className="text-xs text-red-400 px-1">{scheduleSaveError}</p>
           )}
         </div>
+      </div>
 
-        {/* Auto Post active banner */}
-        {autoPost && blotatoConnected && (
-          <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3">
-            <p className="text-xs text-amber-400/80 leading-relaxed">
-              Auto Post is ON — final reels can be sent to selected social
-              platforms. Posting integration coming in the next step.
+      {/* ── Generated Videos library ── */}
+      <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-lg font-semibold tracking-wide text-white">
+              Generated Videos
+            </h2>
+            <p className="text-xs text-neutral-500">
+              All reels saved to Supabase Storage.
             </p>
+          </div>
+          <button
+            type="button"
+            onClick={fetchReels}
+            disabled={reelsLoading}
+            className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors disabled:opacity-40"
+          >
+            {reelsLoading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
+
+        {reels.length === 0 && !reelsLoading && (
+          <p className="text-xs text-neutral-600">
+            No reels yet. Generate a video to see it here.
+          </p>
+        )}
+
+        {reels.length > 0 && (
+          <div className="flex flex-col gap-3">
+            {reels.map((reel) => (
+              <ReelCard
+                key={reel.id}
+                reel={reel}
+                onDelete={handleDeleteReel}
+                deleting={reelDeleteId === reel.id}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -670,8 +1048,8 @@ export default function VideoEngine({
                 <span className="font-mono">
                   netlify/functions/process-reel-background.ts
                 </span>
-                ) is not active in the current flow. It can be re-enabled
-                later if Kie-native endings need to be replaced.
+                ) is not active in the current flow. It can be re-enabled later
+                if Kie-native endings need to be replaced.
               </p>
             </div>
           </div>
