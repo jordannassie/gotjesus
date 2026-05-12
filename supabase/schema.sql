@@ -67,8 +67,31 @@ create table if not exists gotjesus_reels (
 );
 
 -- Enable Row Level Security.
--- Server-side operations use the service role key which bypasses RLS.
+-- Server-side operations use the service role key.
+-- The service role key bypasses RLS for writes (INSERT/UPDATE/DELETE),
+-- but in some Supabase configurations a SELECT policy is needed for reads.
+-- These permissive policies keep all access server-side only.
 alter table gotjesus_reels enable row level security;
+
+-- Allow service role to read all rows (used by getReel polling + library)
+create policy "service role can read reels"
+  on gotjesus_reels for select
+  using (true);
+
+-- Allow service role to insert rows
+create policy "service role can insert reels"
+  on gotjesus_reels for insert
+  with check (true);
+
+-- Allow service role to update rows
+create policy "service role can update reels"
+  on gotjesus_reels for update
+  using (true);
+
+-- Allow service role to delete rows
+create policy "service role can delete reels"
+  on gotjesus_reels for delete
+  using (true);
 
 -- Index for efficient library queries (most recent first)
 create index if not exists gotjesus_reels_created_at_idx

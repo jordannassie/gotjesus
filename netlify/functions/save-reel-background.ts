@@ -46,7 +46,9 @@ async function updateReel(
     .from("gotjesus_reels")
     .update(data)
     .eq("id", id);
-  if (error) console.error(`[save-reel-bg] updateReel(${id}) error:`, error.message);
+  if (error) {
+    console.error(`[save-reel-bg] updateReel(${id}) error:`, error.message, JSON.stringify(error));
+  }
 }
 
 // ─── Storage helpers (inlined) ────────────────────────────────────────────────

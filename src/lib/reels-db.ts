@@ -62,18 +62,53 @@ function getClient() {
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Insert a new reel row.
+ *
+ * Uses a plain .insert() — NOT .insert().select().single().
+ * With RLS enabled, the subsequent SELECT is blocked by the policy even for
+ * service-role clients in some Supabase configurations, which causes
+ * "no row returned" errors even though the insert succeeded.
+ *
+ * The caller must supply the id (use randomUUID() before calling).
+ * Returns a Reel built from the input data + server-side defaults.
+ */
 export async function createReel(data: CreateReelInput): Promise<Reel> {
+  if (!data.id) throw new Error("createReel: data.id is required");
+
+  console.log(`[reels-db] inserting reel row ${data.id}`);
   const supabase = getClient();
-  const { data: row, error } = await supabase
-    .from("gotjesus_reels")
-    .insert(data)
-    .select()
-    .single();
-  if (error || !row)
-    throw new Error(
-      `createReel failed: ${error?.message ?? "no row returned"}`
-    );
-  return row as Reel;
+
+  const { error } = await supabase.from("gotjesus_reels").insert(data);
+
+  if (error) {
+    console.error(`[reels-db] insert error for reel ${data.id}:`, error.message, error);
+    throw new Error(`createReel failed: ${error.message}`);
+  }
+
+  console.log(`[reels-db] reel row inserted ${data.id}`);
+
+  // Return a Reel constructed from input — we don't re-fetch to avoid RLS SELECT issues
+  return {
+    id: data.id,
+    created_at: new Date().toISOString(),
+    generation_source: data.generation_source ?? "manual",
+    scheduled_for: data.scheduled_for ?? null,
+    kie_task_id: data.kie_task_id ?? null,
+    kie_video_url: data.kie_video_url ?? null,
+    saved_video_url: data.saved_video_url ?? null,
+    prompt_used: data.prompt_used ?? null,
+    caption_used: data.caption_used,
+    status: data.status,
+    blotato_status: data.blotato_status ?? null,
+    instagram_enabled: data.instagram_enabled ?? false,
+    tiktok_enabled: data.tiktok_enabled ?? false,
+    youtube_enabled: data.youtube_enabled ?? false,
+    instagram_post_submission_id: data.instagram_post_submission_id ?? null,
+    tiktok_post_submission_id: data.tiktok_post_submission_id ?? null,
+    youtube_post_submission_id: data.youtube_post_submission_id ?? null,
+    error_message: data.error_message ?? null,
+  };
 }
 
 export async function updateReel(
@@ -85,7 +120,10 @@ export async function updateReel(
     .from("gotjesus_reels")
     .update(data)
     .eq("id", id);
-  if (error) throw new Error(`updateReel(${id}) failed: ${error.message}`);
+  if (error) {
+    console.error(`[reels-db] updateReel(${id}) error:`, error.message, error);
+    throw new Error(`updateReel(${id}) failed: ${error.message}`);
+  }
 }
 
 export async function getReel(id: string): Promise<Reel | null> {
