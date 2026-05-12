@@ -27,8 +27,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 // Canonical end card sources (inlined — background functions can't import from src/lib/)
-// Supabase URL = permanent remote canonical source
-// Local path   = bundled static asset preferred for FFmpeg (no network fetch)
 const GOT_JESUS_ENDCARD_SUPABASE_URL =
   "https://phhczohqidgrvcmszets.supabase.co/storage/v1/object/public/GOT%20JESUS/image/gotjesus-endcard.png";
 const GOT_JESUS_ENDCARD_LOCAL_PATH = join(process.cwd(), "public", "gotjesus-endcard.png");
@@ -53,10 +51,12 @@ interface JobStatus {
 }
 
 function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.");
+  }
+  return createClient(url, key);
 }
 
 async function writeStatus(
@@ -65,23 +65,33 @@ async function writeStatus(
 ): Promise<void> {
   const supabase = getSupabase();
   const payload: JobStatus = { ...data, updatedAt: Date.now() };
+  const bucket = process.env.SUPABASE_VIDEO_BUCKET || "gotjesus-videos";
 
-  await supabase.storage
-    .from(process.env.SUPABASE_VIDEO_BUCKET || "gotjesus-videos")
+  const { error } = await supabase.storage
+    .from(bucket)
     .upload(`status/${jobId}.json`, Buffer.from(JSON.stringify(payload)), {
       contentType: "application/json",
       upsert: true,
     });
+
+  if (error) {
+    console.error(`[process-reel] writeStatus(${jobId}, ${data.status}) FAILED:`, error.message);
+    throw new Error(`writeStatus failed: ${error.message}`);
+  }
+
+  console.log(`[process-reel] writeStatus(${jobId}): ${data.status}`);
 }
 
 // ─── Download helper ──────────────────────────────────────────────────────────
 
 async function downloadToFile(url: string, dest: string): Promise<void> {
+  console.log(`[process-reel] Downloading: ${url}`);
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`Download failed [${url}]: HTTP ${res.status}`);
+    throw new Error(`Download failed [${url}]: HTTP ${res.status} ${res.statusText}`);
   }
   await writeFile(dest, Buffer.from(await res.arrayBuffer()));
+  console.log(`[process-reel] Download complete → ${dest}`);
 }
 
 // ─── FFmpeg helper ────────────────────────────────────────────────────────────
@@ -89,12 +99,15 @@ async function downloadToFile(url: string, dest: string): Promise<void> {
 async function runFfmpeg(args: string[]): Promise<void> {
   if (!ffmpegStatic) throw new Error("ffmpeg-static binary not found.");
 
+  console.log(`[process-reel] FFmpeg args: ${args.join(" ")}`);
+
   const { stderr } = await execFileAsync(ffmpegStatic, args, {
     maxBuffer: 100 * 1024 * 1024, // 100 MB — FFmpeg logs to stderr
   });
 
   if (stderr) {
-    console.log("[ffmpeg]", stderr.slice(-2000)); // Log last 2kb of stderr
+    // FFmpeg always writes to stderr even on success — log last 1kb only
+    console.log("[ffmpeg]", stderr.slice(-1000));
   }
 }
 
@@ -113,6 +126,9 @@ const handler: Handler = async (event: HandlerEvent) => {
     return { statusCode: 400, body: "Missing jobId or rawVideoUrl" };
   }
 
+  console.log(`[process-reel] Starting job ${jobId}`);
+  console.log(`[process-reel] Raw video URL: ${rawVideoUrl}`);
+
   const bucket = process.env.SUPABASE_VIDEO_BUCKET || "gotjesus-videos";
   const tmpDir = join(tmpdir(), `reel-${randomUUID()}`);
   const rawPath = join(tmpDir, "raw.mp4");
@@ -122,42 +138,41 @@ const handler: Handler = async (event: HandlerEvent) => {
 
   try {
     await mkdir(tmpDir, { recursive: true });
+    console.log(`[process-reel] Working directory: ${tmpDir}`);
 
     // Ensure ffmpeg binary is executable on Lambda
     if (ffmpegStatic) {
       await chmod(ffmpegStatic, 0o755).catch(() => {});
+      console.log(`[process-reel] FFmpeg binary: ${ffmpegStatic}`);
     }
 
+    // ── Stage 1: Processing ───────────────────────────────────────────────────
     await writeStatus(jobId, { status: "processing" });
 
     // Download raw video from Kie.ai
-    console.log("[process-reel] Downloading raw video…");
+    console.log("[process-reel] Stage 1: Downloading raw video");
     await downloadToFile(rawVideoUrl, rawPath);
 
-    // Resolve end card: prefer locally bundled asset, fall back to canonical Supabase URL.
-    // The local file is included in this function bundle via netlify.toml included_files,
-    // so no network fetch is needed in normal production runs.
+    // ── Stage 2: Resolve end card ─────────────────────────────────────────────
+    console.log("[process-reel] Stage 2: Resolving end card asset");
     try {
       await access(GOT_JESUS_ENDCARD_LOCAL_PATH);
       await copyFile(GOT_JESUS_ENDCARD_LOCAL_PATH, endCardPath);
       console.log("[process-reel] Using local bundled end card asset");
     } catch {
-      console.log(
-        "[process-reel] Local end card not found — downloading from canonical Supabase URL"
-      );
+      console.log("[process-reel] Local end card not found — downloading from canonical Supabase URL");
       await downloadToFile(GOT_JESUS_ENDCARD_SUPABASE_URL, endCardPath);
     }
 
+    // ── Stage 3: Create end card segment ─────────────────────────────────────
     await writeStatus(jobId, { status: "appending_endcard" });
+    console.log("[process-reel] Stage 3: Creating 1-second end card video segment");
 
-    // Determine output dimensions from resolution config
     const resolution = process.env.KIE_VIDEO_RESOLUTION || "720p";
     const width = resolution === "480p" ? 480 : 720;
     const height = resolution === "480p" ? 854 : 1280;
     const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
 
-    // Step 1: Create 1-second silent end card video
-    console.log("[process-reel] Creating end card segment…");
     await runFfmpeg([
       "-loop", "1",
       "-i", endCardPath,
@@ -173,8 +188,8 @@ const handler: Handler = async (event: HandlerEvent) => {
       endCardVideoPath,
     ]);
 
-    // Step 2: Concatenate raw video + end card into final 8-second MP4
-    console.log("[process-reel] Concatenating video + end card…");
+    // ── Stage 4: Concatenate ──────────────────────────────────────────────────
+    console.log("[process-reel] Stage 4: Concatenating 7s montage + 1s end card");
     await runFfmpeg([
       "-i", rawPath,
       "-i", endCardVideoPath,
@@ -190,10 +205,10 @@ const handler: Handler = async (event: HandlerEvent) => {
       outputPath,
     ]);
 
+    // ── Stage 5: Upload ───────────────────────────────────────────────────────
     await writeStatus(jobId, { status: "uploading" });
+    console.log("[process-reel] Stage 5: Uploading final video to Supabase");
 
-    // Upload final MP4 to Supabase Storage
-    console.log("[process-reel] Uploading final video to Supabase…");
     const supabase = getSupabase();
     const finalBuffer = await readFile(outputPath);
     const fileName = `${jobId}.mp4`;
@@ -206,21 +221,21 @@ const handler: Handler = async (event: HandlerEvent) => {
       });
 
     if (uploadError) {
-      throw new Error(`Supabase upload error: ${uploadError.message}`);
+      throw new Error(`Supabase video upload failed: ${uploadError.message}`);
     }
 
-    const { data: urlData } = supabase.storage
-      .from(bucket)
-      .getPublicUrl(fileName);
+    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(fileName);
+    console.log(`[process-reel] Job ${jobId} complete. Final URL: ${urlData.publicUrl}`);
 
-    console.log("[process-reel] Final URL:", urlData.publicUrl);
     await writeStatus(jobId, { status: "complete", url: urlData.publicUrl });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[process-reel] Error:", message);
-    await writeStatus(jobId, { status: "failed", error: message }).catch(
-      () => {}
-    );
+    console.error(`[process-reel] Job ${jobId} FAILED:`, message);
+
+    // Best-effort: write failed status so the polling client gets a real answer
+    await writeStatus(jobId, { status: "failed", error: message }).catch((e) => {
+      console.error(`[process-reel] Could not write failed status for job ${jobId}:`, e);
+    });
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
