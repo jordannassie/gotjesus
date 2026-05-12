@@ -4,7 +4,7 @@
  *
  * Creates a gotjesus_reels row, then invokes save-reel-background to:
  *   1. Download the Kie video and save it to Supabase Storage.
- *   2. If autoPost: upload to Blotato and publish to each enabled platform.
+ *   2. If autoPost: publish to each enabled platform via Blotato v2.
  *
  * Returns: { reelId }
  *
@@ -45,21 +45,23 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
 
-  const siteUrl = process.env.DEPLOY_PRIME_URL || process.env.URL || "";
-  if (!siteUrl)
-    return NextResponse.json(
-      {
-        error:
-          "DEPLOY_PRIME_URL / URL env var is not set. " +
-          "Run via `netlify dev` locally or deploy to Netlify.",
-      },
-      { status: 500 }
-    );
+  // ── Derive base URL from the incoming request ────────────────────────────────
+  // Using the request's own origin is more reliable than DEPLOY_PRIME_URL or URL
+  // because those env vars can point to a different deploy (e.g. preview vs. prod).
+  const requestUrl = new URL(req.url);
+  const baseUrl = `${requestUrl.protocol}//${requestUrl.host}`;
+  const bgUrl = `${baseUrl}/.netlify/functions/save-reel-background`;
+
+  console.log(`[save-reel route] Request origin: ${baseUrl}`);
+  console.log(`[save-reel route] Background function URL: ${bgUrl}`);
 
   const reelId = randomUUID();
-  console.log(`[save-reel] Creating reel ${reelId} (autoPost=${autoPost}, platforms=${platforms.join(",")})`);
+  console.log(
+    `[save-reel route] Creating reel ${reelId} ` +
+    `(autoPost=${autoPost}, platforms=[${platforms.join(",")}])`
+  );
 
-  // Create the DB row first so polling has something to read immediately
+  // ── Create DB row so polling has something to read immediately ───────────────
   try {
     await createReel({
       id: reelId,
@@ -73,41 +75,72 @@ export async function POST(req: NextRequest) {
       tiktok_enabled: platforms.includes("tiktok"),
       youtube_enabled: platforms.includes("youtube"),
     });
-    console.log(`[save-reel] DB row created for reel ${reelId}`);
+    console.log(`[save-reel route] Created reel row ${reelId}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[save-reel] createReel failed:", message);
+    console.error("[save-reel route] createReel failed:", message);
     return NextResponse.json(
       { error: `Failed to create reel record: ${message}` },
       { status: 500 }
     );
   }
 
-  // Invoke the background function — returns 202 immediately
-  const bgUrl = `${siteUrl}/.netlify/functions/save-reel-background`;
+  // ── Invoke the background function ──────────────────────────────────────────
+  // Netlify background functions return 202 immediately and run asynchronously.
+  console.log(`[save-reel route] Invoking save-reel-background for reel ${reelId}`);
+
+  let bgStatus = 0;
+  let bgBody = "";
   try {
     const bgRes = await fetch(bgUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reelId, kieVideoUrl, autoPost, platforms }),
+      // Disable Next.js fetch caching — this must always hit the function live
+      cache: "no-store",
     });
-    if (!bgRes.ok && bgRes.status !== 202) {
-      throw new Error(`Background function returned HTTP ${bgRes.status}`);
+
+    bgStatus = bgRes.status;
+
+    // Read body for diagnostics (background fns return empty 202, but capture errors)
+    try {
+      bgBody = await bgRes.text();
+    } catch {
+      bgBody = "(could not read response body)";
     }
-    console.log(`[save-reel] Background function invoked for reel ${reelId} (HTTP ${bgRes.status})`);
+
+    console.log(
+      `[save-reel route] Background invocation status: ${bgStatus} — body: ${bgBody || "(empty)"}`
+    );
+
+    // 202 = background function accepted and running async (expected)
+    // 200 = function ran synchronously (shouldn't happen for -background suffix)
+    // Anything else = invocation failed
+    if (bgStatus !== 202 && bgStatus !== 200) {
+      throw new Error(
+        `save-reel-background returned HTTP ${bgStatus}: ${bgBody || "(empty body)"}`
+      );
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[save-reel] Background function invoke failed:", message);
+    console.error(
+      `[save-reel route] Background invocation failed (HTTP ${bgStatus}): ${message}`
+    );
+
     await updateReel(reelId, {
       status: "failed",
-      error_message: `Background function error: ${message}`,
+      error_message: `Failed to invoke save-reel-background: ${message}`,
     }).catch(() => {});
+
     return NextResponse.json(
-      { error: `Could not start save pipeline: ${message}` },
+      {
+        error: `Save pipeline could not start. Background function error: ${message}`,
+      },
       { status: 500 }
     );
   }
 
+  console.log(`[save-reel route] Background function accepted reel ${reelId} (HTTP ${bgStatus})`);
   return NextResponse.json({ reelId });
 }
 

@@ -521,7 +521,10 @@ export default function VideoEngine({
       if (savePollCount.current >= MAX_SAVE_POLLS) {
         stopSavePoll();
         setSaveState("failed");
-        setSaveError("Save timed out after 6 minutes.");
+        setSaveError(
+          "Save timed out — the background function did not complete within 6 minutes. " +
+          "Check Netlify function logs for save-reel-background."
+        );
         return;
       }
       savePollCount.current += 1;
@@ -608,7 +611,10 @@ export default function VideoEngine({
 
         if (!res.ok || data.error) {
           setSaveState("failed");
-          setSaveError(data.error ?? "Failed to start save.");
+          setSaveError(
+            data.error ??
+              `Save pipeline failed (HTTP ${res.status}). Check Netlify function logs.`
+          );
           return;
         }
 
