@@ -15,3 +15,6 @@
 # path rather than being bundled by esbuild (which would strip the binary).
 [functions."process-reel-background"]
   external_node_modules = ["ffmpeg-static"]
+  # Bundle the official end card image with this function so FFmpeg can use it
+  # directly from disk without a network fetch on every generation.
+  included_files = ["public/gotjesus-endcard.png"]

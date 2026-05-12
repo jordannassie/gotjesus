@@ -6,7 +6,10 @@
  *
  * Flow:
  *   1. Download raw Kie video to /tmp
- *   2. Download official Got Jesus end card from deployment URL
+ *   2. Resolve official Got Jesus end card:
+ *        - Preferred: local asset bundled via netlify.toml included_files
+ *          (public/gotjesus-endcard.png — no network fetch, guaranteed correct asset)
+ *        - Fallback: canonical Supabase URL if local file is not accessible
  *   3. Create 1-second silent end card video (libx264 + AAC, matching resolution)
  *   4. Concatenate raw video + end card → final 8-second MP4
  *   5. Upload final MP4 to Supabase Storage
@@ -18,10 +21,17 @@ import { createClient } from "@supabase/supabase-js";
 import ffmpegStatic from "ffmpeg-static";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, mkdir, rm, chmod, writeFile } from "node:fs/promises";
+import { readFile, mkdir, rm, chmod, writeFile, copyFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+
+// Canonical end card sources (inlined — background functions can't import from src/lib/)
+// Supabase URL = permanent remote canonical source
+// Local path   = bundled static asset preferred for FFmpeg (no network fetch)
+const GOT_JESUS_ENDCARD_SUPABASE_URL =
+  "https://phhczohqidgrvcmszets.supabase.co/storage/v1/object/public/GOT%20JESUS/image/gotjesus-endcard.png";
+const GOT_JESUS_ENDCARD_LOCAL_PATH = join(process.cwd(), "public", "gotjesus-endcard.png");
 
 const execFileAsync = promisify(execFile);
 
@@ -124,14 +134,19 @@ const handler: Handler = async (event: HandlerEvent) => {
     console.log("[process-reel] Downloading raw video…");
     await downloadToFile(rawVideoUrl, rawPath);
 
-    // Download official end card from this deployment
-    const siteUrl =
-      process.env.DEPLOY_PRIME_URL ||
-      process.env.URL ||
-      "http://localhost:8888";
-    const endCardUrl = `${siteUrl}/gotjesus-endcard.png`;
-    console.log("[process-reel] Downloading end card from", endCardUrl);
-    await downloadToFile(endCardUrl, endCardPath);
+    // Resolve end card: prefer locally bundled asset, fall back to canonical Supabase URL.
+    // The local file is included in this function bundle via netlify.toml included_files,
+    // so no network fetch is needed in normal production runs.
+    try {
+      await access(GOT_JESUS_ENDCARD_LOCAL_PATH);
+      await copyFile(GOT_JESUS_ENDCARD_LOCAL_PATH, endCardPath);
+      console.log("[process-reel] Using local bundled end card asset");
+    } catch {
+      console.log(
+        "[process-reel] Local end card not found — downloading from canonical Supabase URL"
+      );
+      await downloadToFile(GOT_JESUS_ENDCARD_SUPABASE_URL, endCardPath);
+    }
 
     await writeStatus(jobId, { status: "appending_endcard" });
 
