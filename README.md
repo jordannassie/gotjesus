@@ -42,6 +42,12 @@ No manual plugin installation is required — Netlify handles Next.js automatica
 
 ---
 
+## Video Format
+
+Video generation defaults to 9:16 at 720p. Resolution is configurable through `KIE_VIDEO_RESOLUTION` if Kie.ai supports another accepted value.
+
+---
+
 ## Tech Stack
 
 - [Next.js](https://nextjs.org/) (App Router)
