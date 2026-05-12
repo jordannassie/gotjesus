@@ -15,7 +15,13 @@ import { createClient } from "@supabase/supabase-js";
 
 export interface PostingSettings {
   id?: string;
+  /** Controls the SCHEDULED daily automation engine only. */
   autoPostEnabled: boolean;
+  /**
+   * Controls whether clicking "Generate Video" immediately posts the reel
+   * through Blotato to enabled platforms. Independent of autoPostEnabled.
+   */
+  manualPostEnabled: boolean;
   instagramEnabled: boolean;
   tiktokEnabled: boolean;
   youtubeEnabled: boolean;
@@ -28,6 +34,7 @@ export interface PostingSettings {
 
 export const DEFAULT_SETTINGS: PostingSettings = {
   autoPostEnabled: false,
+  manualPostEnabled: false,
   instagramEnabled: true,
   tiktokEnabled: true,
   youtubeEnabled: true,
@@ -43,6 +50,7 @@ interface DbRow {
   created_at: string;
   updated_at: string;
   auto_post_enabled: boolean;
+  manual_post_enabled: boolean;
   instagram_enabled: boolean;
   tiktok_enabled: boolean;
   youtube_enabled: boolean;
@@ -54,6 +62,7 @@ interface DbRow {
 type DbUpdate = {
   updated_at?: string;
   auto_post_enabled?: boolean;
+  manual_post_enabled?: boolean;
   instagram_enabled?: boolean;
   tiktok_enabled?: boolean;
   youtube_enabled?: boolean;
@@ -75,6 +84,7 @@ function rowToSettings(row: DbRow): PostingSettings {
   return {
     id: row.id,
     autoPostEnabled: row.auto_post_enabled,
+    manualPostEnabled: row.manual_post_enabled ?? false,
     instagramEnabled: row.instagram_enabled,
     tiktokEnabled: row.tiktok_enabled,
     youtubeEnabled: row.youtube_enabled,
@@ -150,6 +160,8 @@ export async function updatePostingSettings(
     };
     if (settings.autoPostEnabled !== undefined)
       updates.auto_post_enabled = settings.autoPostEnabled;
+    if (settings.manualPostEnabled !== undefined)
+      updates.manual_post_enabled = settings.manualPostEnabled;
     if (settings.instagramEnabled !== undefined)
       updates.instagram_enabled = settings.instagramEnabled;
     if (settings.tiktokEnabled !== undefined)

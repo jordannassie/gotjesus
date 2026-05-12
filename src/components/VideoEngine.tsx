@@ -139,6 +139,10 @@ function ReelCard({
   const [expanded, setExpanded] = useState(false);
   const displayUrl = reel.saved_video_url ?? reel.kie_video_url;
   const statusColor = STATUS_COLORS[reel.status] ?? "text-neutral-400";
+  const wasPosted =
+    reel.instagram_post_submission_id ||
+    reel.tiktok_post_submission_id ||
+    reel.youtube_post_submission_id;
 
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4 flex flex-col gap-3">
@@ -171,6 +175,26 @@ function ReelCard({
         >
           {deleting ? "..." : "Delete"}
         </button>
+      </div>
+
+      {/* Posted / Blotato info */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs text-neutral-500">
+          Posted manually:{" "}
+          <span
+            className={
+              wasPosted ? "text-emerald-400 font-medium" : "text-neutral-600"
+            }
+          >
+            {wasPosted ? "Yes" : "No"}
+          </span>
+        </span>
+        {reel.blotato_status && (
+          <span className="text-xs text-neutral-500">
+            Blotato:{" "}
+            <span className="text-neutral-400">{reel.blotato_status}</span>
+          </span>
+        )}
       </div>
 
       {reel.scheduled_for && (
@@ -242,7 +266,12 @@ export default function VideoEngine({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   // ── Social posting — initialized from saved settings ───────────────────────
+  /** autoPost controls the SCHEDULED daily engine only */
   const [autoPost, setAutoPost] = useState(initialSettings.autoPostEnabled);
+  /** manualPost controls whether Generate Video clicks post immediately */
+  const [manualPost, setManualPost] = useState(
+    initialSettings.manualPostEnabled
+  );
   const [postInstagram, setPostInstagram] = useState(
     initialSettings.instagramEnabled
   );
@@ -338,6 +367,7 @@ export default function VideoEngine({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           autoPostEnabled: autoPost,
+          manualPostEnabled: manualPost,
           instagramEnabled: postInstagram,
           tiktokEnabled: postTiktok,
           youtubeEnabled: postYoutube,
@@ -361,6 +391,7 @@ export default function VideoEngine({
     }
   }, [
     autoPost,
+    manualPost,
     postInstagram,
     postTiktok,
     postYoutube,
@@ -463,10 +494,12 @@ export default function VideoEngine({
       setSaveError(null);
       savePollCount.current = 0;
 
+      // manualPost drives immediate posting for Generate Video clicks.
+      // autoPost is for the scheduled daily engine only — not used here.
       const enabledPlatforms: string[] = [];
-      if (autoPost && postInstagram) enabledPlatforms.push("instagram");
-      if (autoPost && postTiktok) enabledPlatforms.push("tiktok");
-      if (autoPost && postYoutube) enabledPlatforms.push("youtube");
+      if (manualPost && postInstagram) enabledPlatforms.push("instagram");
+      if (manualPost && postTiktok) enabledPlatforms.push("tiktok");
+      if (manualPost && postYoutube) enabledPlatforms.push("youtube");
 
       try {
         const res = await fetch("/api/save-reel", {
@@ -475,7 +508,7 @@ export default function VideoEngine({
           body: JSON.stringify({
             kieVideoUrl: kieUrl,
             kieTaskId: taskId,
-            autoPost,
+            autoPost: manualPost,
             platforms: enabledPlatforms,
           }),
         });
@@ -499,7 +532,7 @@ export default function VideoEngine({
       }
     },
     [
-      autoPost,
+      manualPost,
       postInstagram,
       postTiktok,
       postYoutube,
@@ -754,10 +787,10 @@ export default function VideoEngine({
                 </span>
                 This reel is permanently stored and visible in the video library
                 below.
-                {autoPost && blotatoConnected && (
+                {manualPost && blotatoConnected && (
                   <span>
                     {" "}
-                    Auto Post is ON — posting to enabled platforms via Blotato.
+                    Post Manual Generations is ON — posting to enabled platforms via Blotato.
                   </span>
                 )}
               </p>
@@ -799,11 +832,35 @@ export default function VideoEngine({
 
         {/* Platform toggles */}
         <div className="flex flex-col gap-2">
+          {/* Manual Generate Posting */}
           <div className="flex items-center justify-between py-3 px-4 rounded-lg border border-neutral-800 bg-neutral-900">
             <div className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium text-white">Auto Post</span>
+              <span className="text-sm font-medium text-white">
+                Post Manual Generations
+              </span>
               <span className="text-xs text-neutral-500">
-                Post to social platforms when a reel is generated
+                When ON, videos created by clicking Generate Video are posted
+                immediately to selected platforms
+              </span>
+            </div>
+            <Toggle
+              checked={manualPost}
+              onChange={() => {
+                setManualPost((v) => !v);
+                setScheduleSaved(false);
+              }}
+              disabled={!blotatoConnected}
+            />
+          </div>
+
+          {/* Automatic Daily Posting */}
+          <div className="flex items-center justify-between py-3 px-4 rounded-lg border border-neutral-800 bg-neutral-900">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-white">
+                Automatic Daily Posting
+              </span>
+              <span className="text-xs text-neutral-500">
+                Run the scheduled content engine at configured times each day
               </span>
             </div>
             <Toggle
@@ -862,6 +919,28 @@ export default function VideoEngine({
             Set BLOTATO_API_KEY and at least one platform account ID to enable
             posting.
           </p>
+        )}
+
+        {/* Active posting summary */}
+        {blotatoConnected && (manualPost || autoPost) && (
+          <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-4 py-3 flex flex-col gap-1">
+            {manualPost && (
+              <p className="text-xs text-emerald-400/80">
+                <span className="font-medium text-emerald-300">
+                  Post Manual Generations ON
+                </span>{" "}
+                — Generate Video will post immediately to enabled platforms.
+              </p>
+            )}
+            {autoPost && (
+              <p className="text-xs text-violet-400/80">
+                <span className="font-medium text-violet-300">
+                  Automatic Daily Posting ON
+                </span>{" "}
+                — The scheduled engine will post at configured times.
+              </p>
+            )}
+          </div>
         )}
 
         {/* Divider */}
