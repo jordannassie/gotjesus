@@ -70,8 +70,17 @@ export interface KieResultJson {
 /**
  * Submit a Seedance 2.0 Fast text-to-video generation task.
  * Returns the taskId to poll with getTask().
+ *
+ * When lastFrameUrl is provided (native-ending test mode):
+ *   - duration is set to 8 seconds
+ *   - last_frame_url is included so Seedance ends on the branded end card
+ * When lastFrameUrl is omitted (normal FFmpeg pipeline mode):
+ *   - duration is 7 seconds (1 second reserved for FFmpeg end card assembly)
  */
-export async function createVideoTask(prompt: string): Promise<string> {
+export async function createVideoTask(
+  prompt: string,
+  lastFrameUrl?: string
+): Promise<string> {
   const response = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
     method: "POST",
     headers: authHeaders(),
@@ -80,9 +89,10 @@ export async function createVideoTask(prompt: string): Promise<string> {
       input: {
         prompt,
         aspect_ratio: "9:16",
-        resolution: process.env.KIE_VIDEO_RESOLUTION || "720p",
-        duration: 7,
+        resolution: process.env.KIE_VIDEO_RESOLUTION || "480p",
+        duration: lastFrameUrl ? 8 : 7,
         generate_audio: true,
+        ...(lastFrameUrl ? { last_frame_url: lastFrameUrl } : {}),
       },
     }),
   });

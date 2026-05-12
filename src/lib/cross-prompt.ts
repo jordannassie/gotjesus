@@ -1,6 +1,10 @@
 /**
  * The canonical cross-discovery prompt used for every GotJesus Reel Engine video.
- * This generates the raw montage only. The official end card is appended separately via FFmpeg.
+ *
+ * Normal mode:  generates a 7-second raw montage; FFmpeg appends the end card.
+ * Native ending test (KIE_NATIVE_ENDING_TEST=true):
+ *   append CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX and pass the end card
+ *   image as last_frame_url so Seedance ends natively on the branded frame.
  */
 
 /**
@@ -68,3 +72,11 @@ no social media UI
 no watermarks
 no extra logos during the montage
 no continuous background music across the whole video`;
+
+/**
+ * Appended to CROSS_DISCOVERY_PROMPT when KIE_NATIVE_ENDING_TEST=true.
+ * Instructs Seedance to end the video on the provided last_frame_url image
+ * (the official Got Jesus end card) without distorting it.
+ */
+export const CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX =
+  "\n\nThe video should naturally conclude on the provided final frame image. Do not distort or redesign the final frame image.";

@@ -7,8 +7,11 @@ import { getPostingSettings } from "@/lib/posting-settings";
 export default async function Home() {
   // All env/server logic runs here — nothing secret leaks to the client bundle
   const blotatoConnected = isBlotatoConnected();
-  const resolution = process.env.KIE_VIDEO_RESOLUTION || "720p";
+  const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
   const initialSettings = await getPostingSettings();
+  // When true: Kie generates the full 8-second video natively ending on the
+  // branded end card; FFmpeg finalization is bypassed.
+  const nativeEndingTest = process.env.KIE_NATIVE_ENDING_TEST === "true";
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-6 py-16">
@@ -31,6 +34,7 @@ export default async function Home() {
           fullPrompt={CROSS_DISCOVERY_PROMPT}
           resolution={resolution}
           initialSettings={initialSettings}
+          nativeEndingTest={nativeEndingTest}
         />
 
         {/* End Card Asset */}

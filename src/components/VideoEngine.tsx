@@ -30,6 +30,8 @@ interface VideoEngineProps {
   fullPrompt: string;
   resolution: string;
   initialSettings: PostingSettings;
+  /** When true: Kie generates the 8-second video natively; FFmpeg pipeline is bypassed. */
+  nativeEndingTest?: boolean;
 }
 
 // ─── Status labels ─────────────────────────────────────────────────────────────
@@ -37,13 +39,19 @@ interface VideoEngineProps {
 // Unified status messages shown in the single progress area
 function getProgressLabel(
   genState: GenerationState,
-  finalState: FinalizationState
+  finalState: FinalizationState,
+  nativeEndingTest: boolean
 ): string {
-  if (genState === "submitting") return "Submitting to Seedance 2.0...";
-  if (genState === "waiting" || genState === "queuing" || genState === "generating")
-    return "Generating 7-second montage...";
-  if (genState === "success" && finalState === "idle")
-    return "Raw video complete — starting final reel...";
+  if (genState === "submitting") return "Submitting to Seedance...";
+  if (genState === "waiting" || genState === "queuing" || genState === "generating") {
+    return nativeEndingTest
+      ? "Generating 8-second reel with branded ending..."
+      : "Generating 7-second montage...";
+  }
+  if (genState === "success" && finalState === "idle") {
+    // In native ending test mode generation is done — no finalization needed
+    return nativeEndingTest ? "" : "Raw video complete — starting final reel...";
+  }
   if (finalState === "starting" || finalState === "pending")
     return "Creating final reel...";
   if (finalState === "processing") return "Processing video...";
@@ -114,6 +122,7 @@ export default function VideoEngine({
   fullPrompt,
   resolution,
   initialSettings,
+  nativeEndingTest = false,
 }: VideoEngineProps) {
   // Generation
   const [genState, setGenState] = useState<GenerationState>("idle");
@@ -420,10 +429,13 @@ export default function VideoEngine({
 
   // ─── Auto-finalize ─────────────────────────────────────────────────────────
   // When raw video is ready, automatically kick off finalization.
+  // Skipped entirely in native-ending test mode — Kie already produced the
+  // full 8-second video; no FFmpeg processing is needed.
   // The ref guard prevents double-firing if the effect runs more than once.
 
   useEffect(() => {
     if (
+      !nativeEndingTest &&
       genState === "success" &&
       rawVideoUrl !== null &&
       finalState === "idle" &&
@@ -432,7 +444,7 @@ export default function VideoEngine({
       autoFinalizeTriggered.current = true;
       handleFinalize(rawVideoUrl);
     }
-  }, [genState, rawVideoUrl, finalState, handleFinalize]);
+  }, [nativeEndingTest, genState, rawVideoUrl, finalState, handleFinalize]);
 
   // ─── Derived ───────────────────────────────────────────────────────────────
 
@@ -445,12 +457,16 @@ export default function VideoEngine({
     "uploading",
   ].includes(finalState);
 
-  // "Bridge" state: raw video is ready, auto-finalize useEffect hasn't fired yet
+  // "Bridge" state: raw video is ready, auto-finalize useEffect hasn't fired yet.
+  // Not applicable in native-ending test mode (no finalization step).
   const waitingToFinalize =
-    genState === "success" && rawVideoUrl !== null && finalState === "idle";
+    !nativeEndingTest &&
+    genState === "success" &&
+    rawVideoUrl !== null &&
+    finalState === "idle";
 
   const isRunning = genRunning || finalRunning || waitingToFinalize;
-  const progressLabel = getProgressLabel(genState, finalState);
+  const progressLabel = getProgressLabel(genState, finalState, nativeEndingTest);
 
   const statusRows = [
     { label: "Kie.ai Seedance 2.0", status: "Connected", active: true },
@@ -469,12 +485,20 @@ export default function VideoEngine({
       {/* ── Engine status card ── */}
       <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-6 bg-neutral-950">
         <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold tracking-wide text-white">
-            Cross Discovery Video Engine
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold tracking-wide text-white">
+              Cross Discovery Video Engine
+            </h2>
+            {nativeEndingTest && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-sky-950 border border-sky-800 text-sky-400 font-medium">
+                Test Mode
+              </span>
+            )}
+          </div>
           <p className="text-xs text-neutral-500">
-            Kie.ai Seedance 2.0 Fast — 9:16 vertical — {resolution} — 7 sec
-            montage + 1 sec end card
+            {nativeEndingTest
+              ? `Kie.ai Seedance 2.0 Fast — 9:16 vertical — ${resolution} — 8 sec native branded ending`
+              : `Kie.ai Seedance 2.0 Fast — 9:16 vertical — ${resolution} — 7 sec montage + 1 sec end card`}
           </p>
         </div>
 
@@ -547,8 +571,59 @@ export default function VideoEngine({
         )}
       </div>
 
-      {/* ── Final 8-second reel (main result) ── */}
-      {finalState === "complete" && finalVideoUrl && (
+      {/* ── Native-ending test result (bypasses FFmpeg pipeline) ── */}
+      {nativeEndingTest && genState === "success" && rawVideoUrl && (
+        <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold tracking-wide text-white">
+              Final Video
+            </h2>
+            <span className="text-xs font-medium text-emerald-500">
+              Final video ready
+            </span>
+          </div>
+
+          <div className="w-full rounded-xl overflow-hidden border border-neutral-700">
+            <div className="relative w-full" style={{ aspectRatio: "9 / 16" }}>
+              <video
+                src={rawVideoUrl}
+                controls
+                autoPlay
+                loop
+                playsInline
+                className="absolute inset-0 w-full h-full object-contain bg-black"
+              />
+            </div>
+          </div>
+
+          {/* Test mode note */}
+          <div className="rounded-lg border border-sky-900/50 bg-sky-950/20 px-4 py-3">
+            <p className="text-xs text-sky-400/80 leading-relaxed">
+              <span className="font-semibold text-sky-300">
+                Testing Kie-native branded ending.{" "}
+              </span>
+              Seedance generated this 8-second video with the Got Jesus end
+              card as the requested final frame. FFmpeg pipeline bypassed.
+            </p>
+          </div>
+
+          {/* Auto Post eligibility note */}
+          {autoPost && blotatoConnected && (
+            <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3">
+              <p className="text-xs text-amber-400/80 leading-relaxed">
+                Auto Post is ON — this reel is eligible for social posting.
+              </p>
+            </div>
+          )}
+
+          <p className="text-xs text-neutral-700 font-mono break-all">
+            {rawVideoUrl}
+          </p>
+        </div>
+      )}
+
+      {/* ── Final 8-second reel (FFmpeg pipeline result) ── */}
+      {!nativeEndingTest && finalState === "complete" && finalVideoUrl && (
         <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold tracking-wide text-white">
