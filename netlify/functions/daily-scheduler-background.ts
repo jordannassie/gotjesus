@@ -142,7 +142,7 @@ async function updateReelRow(
 // ─── Kie.ai helpers (inlined) ─────────────────────────────────────────────────
 
 async function submitKieJob(prompt: string): Promise<string> {
-  // Seedance 2.0 Fast does not support last_frame_url alone — use prompt only.
+  const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
   const res = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
     method: "POST",
     headers: {
@@ -157,6 +157,7 @@ async function submitKieJob(prompt: string): Promise<string> {
         resolution: process.env.KIE_VIDEO_RESOLUTION || "480p",
         duration: 8,
         generate_audio: true,
+        ...(endCardUrl ? { reference_image_urls: [endCardUrl] } : {}),
       },
     }),
   });

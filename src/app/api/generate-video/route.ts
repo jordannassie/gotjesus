@@ -6,16 +6,23 @@ import {
 } from "@/lib/cross-prompt";
 
 // POST /api/generate-video
-// Submits an 8-second Seedance 2.0 Fast text-to-video job.
-// The branded ending is requested via prompt text — Seedance does NOT support
-// last_frame_url alone (returns 422 "Not supporting only transmitting the last frame").
+// Submits an 8-second Seedance 2.0 Fast job.
+// GOT_JESUS_ENDCARD_SUPABASE_URL is passed as reference_image_urls so Seedance
+// can see the branded end card. The prompt suffix instructs it to use that
+// reference for the final branded ending moment.
 // Returns: { taskId: string }
 export async function POST() {
   try {
     const prompt =
       CROSS_DISCOVERY_PROMPT + CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX;
 
-    console.log("[generate-video] Submitting 8-sec Seedance job (text-to-video)");
+    const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+    console.log("[generate-video] Submitting 8-sec Seedance job");
+    if (endCardUrl) {
+      console.log("[generate-video] reference_image_urls:", endCardUrl);
+    } else {
+      console.warn("[generate-video] GOT_JESUS_ENDCARD_SUPABASE_URL not set — no reference image");
+    }
     const taskId = await createVideoTask(prompt);
     console.log("[generate-video] Task created:", taskId);
 

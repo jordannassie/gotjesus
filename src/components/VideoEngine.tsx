@@ -766,10 +766,10 @@ export default function VideoEngine({
             <div className="rounded-lg border border-sky-900/50 bg-sky-950/20 px-4 py-3">
               <p className="text-xs text-sky-400/80 leading-relaxed">
                 <span className="font-semibold text-sky-300">
-                  Kie-native branded ending.{" "}
+                  Using Got Jesus branded image reference in Kie generation.{" "}
                 </span>
                 Seedance generated this 8-second reel with the Got Jesus end
-                card as the final frame.
+                card provided as a reference image.
                 {saveRunning && " Saving to permanent library..."}
               </p>
             </div>

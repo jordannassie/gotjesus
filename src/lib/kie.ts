@@ -71,12 +71,16 @@ export interface KieResultJson {
  * Submit a Seedance 2.0 Fast text-to-video generation task.
  * Returns the taskId to poll with getTask().
  *
- * Seedance 2.0 Fast (bytedance/seedance-2-fast) is a pure text-to-video model.
- * It does NOT support last_frame_url alone — passing it without a paired
- * first_frame_url returns a 422 "Not supporting only transmitting the last frame".
- * The branded ending is requested via prompt text only.
+ * Passes GOT_JESUS_ENDCARD_SUPABASE_URL as reference_image_urls so Seedance
+ * can see the branded end card while generating. The prompt's ending suffix
+ * then instructs it to use that reference image for the final branded moment.
+ *
+ * NOTE: last_frame_url is NOT used — Seedance 2.0 Fast rejects it without a
+ * paired first_frame_url (422 "Not supporting only transmitting the last frame").
  */
 export async function createVideoTask(prompt: string): Promise<string> {
+  const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+
   const response = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
     method: "POST",
     headers: authHeaders(),
@@ -88,6 +92,7 @@ export async function createVideoTask(prompt: string): Promise<string> {
         resolution: process.env.KIE_VIDEO_RESOLUTION || "480p",
         duration: 8,
         generate_audio: true,
+        ...(endCardUrl ? { reference_image_urls: [endCardUrl] } : {}),
       },
     }),
   });

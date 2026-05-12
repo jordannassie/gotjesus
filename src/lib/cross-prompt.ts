@@ -1,10 +1,9 @@
 /**
  * The canonical cross-discovery prompt used for every GotJesus Reel Engine video.
  *
- * Normal mode:  generates a 7-second raw montage; FFmpeg appends the end card.
- * Native ending test (KIE_NATIVE_ENDING_TEST=true):
- *   append CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX and pass the end card
- *   image as last_frame_url so Seedance ends natively on the branded frame.
+ * The Got Jesus end card image is passed to Kie as reference_image_urls so
+ * Seedance can see it while generating. The suffix instructs Seedance to use
+ * it as the visual basis for the final branded ending moment in the video.
  */
 
 /**
@@ -74,9 +73,10 @@ no extra logos during the montage
 no continuous background music across the whole video`;
 
 /**
- * Appended to CROSS_DISCOVERY_PROMPT when last_frame_url is used.
- * Instructs Seedance to end on the official Got Jesus branded end card
- * without distorting, redesigning, or replacing it.
+ * Appended to CROSS_DISCOVERY_PROMPT for every generation.
+ * The Got Jesus end card image is passed as reference_image_urls so Seedance
+ * can see it. This suffix tells Seedance exactly how to use that reference
+ * image for the branded ending moment.
  */
 export const CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX =
-  "\n\nEnd the video by naturally concluding on the provided final frame image. The provided branded image must remain clean, readable, centered, and visually consistent. Do not distort, redesign, replace, or add extra text to the branded ending image.";
+  "\n\nUse the provided reference image as the exact visual inspiration for the final branded ending. In the final moment of the video, hard cut to a clean black end-card style shot that matches the reference image as closely as possible: the centered white Got Jesus? .co logo on black. Keep it clean, readable, centered, and visually faithful to the reference image. Do not redesign the logo, change the text, add new text, or distort the branded ending.";
