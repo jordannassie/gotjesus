@@ -6,32 +6,17 @@ import {
 } from "@/lib/cross-prompt";
 
 // POST /api/generate-video
-// Active mode: Kie-native branded ending.
-//   - Full 8-second generation in one step.
-//   - last_frame_url = GOT_JESUS_ENDCARD_SUPABASE_URL so Seedance ends on the
-//     official Got Jesus branded image.
-//   - The FFmpeg/Supabase finalization pipeline is preserved in the codebase
-//     (src/app/api/finalize-video, netlify/functions/process-reel-background.ts)
-//     but is NOT invoked by the active Generate Video flow.
-//
+// Submits an 8-second Seedance 2.0 Fast text-to-video job.
+// The branded ending is requested via prompt text — Seedance does NOT support
+// last_frame_url alone (returns 422 "Not supporting only transmitting the last frame").
 // Returns: { taskId: string }
 export async function POST() {
   try {
-    const lastFrameUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
     const prompt =
       CROSS_DISCOVERY_PROMPT + CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX;
 
-    console.log("[generate-video] mode=kie-native-branded-ending (8 sec)");
-    if (lastFrameUrl) {
-      console.log("[generate-video] last_frame_url:", lastFrameUrl);
-    } else {
-      console.warn(
-        "[generate-video] GOT_JESUS_ENDCARD_SUPABASE_URL is not set — " +
-          "video will be generated without a branded last frame."
-      );
-    }
-
-    const taskId = await createVideoTask(prompt, lastFrameUrl);
+    console.log("[generate-video] Submitting 8-sec Seedance job (text-to-video)");
+    const taskId = await createVideoTask(prompt);
     console.log("[generate-video] Task created:", taskId);
 
     return NextResponse.json({ taskId });
