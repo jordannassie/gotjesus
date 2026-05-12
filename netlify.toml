@@ -1,0 +1,10 @@
+[build]
+  command   = "npm run build"
+  publish   = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Netlify automatically installs @netlify/plugin-nextjs when a Next.js project
+# is detected. That plugin converts App Router API routes into Netlify Functions,
+# which is required for /api/generate-video to work in production.
