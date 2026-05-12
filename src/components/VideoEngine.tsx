@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback } from "react";
 import type { PostingSettings } from "@/lib/posting-settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -14,55 +14,29 @@ type GenerationState =
   | "success"
   | "failed";
 
-type FinalizationState =
-  | "idle"
-  | "starting"
-  | "pending"
-  | "processing"
-  | "appending_endcard"
-  | "uploading"
-  | "complete"
-  | "failed";
-
 interface VideoEngineProps {
   blotatoConnected: boolean;
   promptSummary: string;
   fullPrompt: string;
   resolution: string;
   initialSettings: PostingSettings;
-  /** When true: Kie generates the 8-second video natively; FFmpeg pipeline is bypassed. */
-  nativeEndingTest?: boolean;
 }
 
 // ─── Status labels ─────────────────────────────────────────────────────────────
 
-// Unified status messages shown in the single progress area
-function getProgressLabel(
-  genState: GenerationState,
-  finalState: FinalizationState,
-  nativeEndingTest: boolean
-): string {
+function getProgressLabel(genState: GenerationState): string {
   if (genState === "submitting") return "Submitting to Seedance...";
-  if (genState === "waiting" || genState === "queuing" || genState === "generating") {
-    return nativeEndingTest
-      ? "Generating 8-second reel with branded ending..."
-      : "Generating 7-second montage...";
-  }
-  if (genState === "success" && finalState === "idle") {
-    // In native ending test mode generation is done — no finalization needed
-    return nativeEndingTest ? "" : "Raw video complete — starting final reel...";
-  }
-  if (finalState === "starting" || finalState === "pending")
-    return "Creating final reel...";
-  if (finalState === "processing") return "Processing video...";
-  if (finalState === "appending_endcard") return "Appending Got Jesus end card...";
-  if (finalState === "uploading") return "Uploading final reel...";
+  if (
+    genState === "waiting" ||
+    genState === "queuing" ||
+    genState === "generating"
+  )
+    return "Generating 8-second reel with branded ending...";
   return "";
 }
 
 const POLL_INTERVAL_MS = 6000;
 const MAX_GEN_POLLS = 120; // 12 min
-const MAX_FINAL_POLLS = 180; // 18 min
 
 // Default posting times keyed by posts-per-day count
 const DEFAULT_TIMES: Record<number, string[]> = {
@@ -122,28 +96,22 @@ export default function VideoEngine({
   fullPrompt,
   resolution,
   initialSettings,
-  nativeEndingTest = false,
 }: VideoEngineProps) {
-  // Generation
+  // Generation state
   const [genState, setGenState] = useState<GenerationState>("idle");
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [rawVideoUrl, setRawVideoUrl] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
-  // Finalization
-  const [finalState, setFinalState] = useState<FinalizationState>("idle");
-  const [finalJobId, setFinalJobId] = useState<string | null>(null);
-  const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
-  const [finalError, setFinalError] = useState<string | null>(null);
-
-  // Whether auto-finalize has been triggered for the current raw video
-  const autoFinalizeTriggered = useRef(false);
-
-  // Post toggles — initialized from saved settings
+  // Social posting — initialized from saved settings
   const [autoPost, setAutoPost] = useState(initialSettings.autoPostEnabled);
-  const [postInstagram, setPostInstagram] = useState(initialSettings.instagramEnabled);
+  const [postInstagram, setPostInstagram] = useState(
+    initialSettings.instagramEnabled
+  );
   const [postTiktok, setPostTiktok] = useState(initialSettings.tiktokEnabled);
-  const [postYoutube, setPostYoutube] = useState(initialSettings.youtubeEnabled);
+  const [postYoutube, setPostYoutube] = useState(
+    initialSettings.youtubeEnabled
+  );
 
   // Schedule settings — initialized from saved settings
   const [postsPerDay, setPostsPerDay] = useState(initialSettings.postsPerDay);
@@ -161,16 +129,11 @@ export default function VideoEngine({
   // Copy prompt state
   const [promptCopied, setPromptCopied] = useState(false);
 
-  // Raw preview visibility inside Advanced
-  const [showRawPreview, setShowRawPreview] = useState(false);
-
   // Advanced section
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const genTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const finalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const genPollCount = useRef(0);
-  const finalPollCount = useRef(0);
 
   // ─── Posts-per-day change ──────────────────────────────────────────────────
 
@@ -211,7 +174,14 @@ export default function VideoEngine({
     } finally {
       setSaving(false);
     }
-  }, [autoPost, postInstagram, postTiktok, postYoutube, postsPerDay, postingTimes]);
+  }, [
+    autoPost,
+    postInstagram,
+    postTiktok,
+    postYoutube,
+    postsPerDay,
+    postingTimes,
+  ]);
 
   // ─── Copy full prompt ──────────────────────────────────────────────────────
 
@@ -231,104 +201,6 @@ export default function VideoEngine({
     setPromptCopied(true);
     setTimeout(() => setPromptCopied(false), 2000);
   }, [fullPrompt]);
-
-  // ─── Finalization polling ──────────────────────────────────────────────────
-
-  const stopFinalPoll = useCallback(() => {
-    if (finalTimer.current) {
-      clearTimeout(finalTimer.current);
-      finalTimer.current = null;
-    }
-  }, []);
-
-  const pollFinal = useCallback(
-    async (id: string) => {
-      if (finalPollCount.current >= MAX_FINAL_POLLS) {
-        stopFinalPoll();
-        setFinalState("failed");
-        setFinalError("Finalization timed out after 18 minutes.");
-        return;
-      }
-      finalPollCount.current += 1;
-
-      try {
-        const res = await fetch(`/api/finalize-video?jobId=${id}`);
-        const data = (await res.json()) as {
-          status?: string;
-          url?: string | null;
-          error?: string | null;
-        };
-
-        // A non-2xx response with an error message is a real server error
-        if (!res.ok && data.error) {
-          stopFinalPoll();
-          setFinalState("failed");
-          setFinalError(data.error);
-          return;
-        }
-
-        const s = data.status as FinalizationState;
-
-        if (s === "complete") {
-          stopFinalPoll();
-          setFinalState("complete");
-          setFinalVideoUrl(data.url ?? null);
-          return;
-        }
-
-        if (s === "failed") {
-          stopFinalPoll();
-          setFinalState("failed");
-          setFinalError(data.error ?? "Finalization failed on the server.");
-          return;
-        }
-
-        // Any in-progress or pending status — keep polling
-        setFinalState(s ?? "pending");
-        finalTimer.current = setTimeout(() => pollFinal(id), POLL_INTERVAL_MS);
-      } catch (err) {
-        stopFinalPoll();
-        setFinalState("failed");
-        setFinalError(err instanceof Error ? err.message : "Polling error.");
-      }
-    },
-    [stopFinalPoll]
-  );
-
-  const handleFinalize = useCallback(
-    async (videoUrl: string) => {
-      stopFinalPoll();
-      setFinalState("starting");
-      setFinalJobId(null);
-      setFinalVideoUrl(null);
-      setFinalError(null);
-      finalPollCount.current = 0;
-
-      try {
-        const res = await fetch("/api/finalize-video", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rawVideoUrl: videoUrl }),
-        });
-        const data = (await res.json()) as { jobId?: string; error?: string };
-
-        if (!res.ok || data.error) {
-          setFinalState("failed");
-          setFinalError(data.error ?? "Failed to start finalization.");
-          return;
-        }
-
-        const id = data.jobId!;
-        setFinalJobId(id);
-        setFinalState("pending");
-        finalTimer.current = setTimeout(() => pollFinal(id), POLL_INTERVAL_MS);
-      } catch (err) {
-        setFinalState("failed");
-        setFinalError(err instanceof Error ? err.message : "Start error.");
-      }
-    },
-    [pollFinal, stopFinalPoll]
-  );
 
   // ─── Generation polling ────────────────────────────────────────────────────
 
@@ -366,13 +238,14 @@ export default function VideoEngine({
         }
 
         const raw = data.state as string;
+
         if (raw === "success") {
           stopGenPoll();
           setGenState("success");
-          setRawVideoUrl(data.videoUrl ?? null);
-          // Auto-finalize is triggered in the useEffect below
+          setVideoUrl(data.videoUrl ?? null);
           return;
         }
+
         if (raw === "fail") {
           stopGenPoll();
           setGenState("failed");
@@ -393,19 +266,11 @@ export default function VideoEngine({
 
   const handleGenerate = useCallback(async () => {
     stopGenPoll();
-    stopFinalPoll();
     setGenState("submitting");
     setTaskId(null);
-    setRawVideoUrl(null);
+    setVideoUrl(null);
     setGenError(null);
-    setFinalState("idle");
-    setFinalJobId(null);
-    setFinalVideoUrl(null);
-    setFinalError(null);
-    setShowRawPreview(false);
-    autoFinalizeTriggered.current = false;
     genPollCount.current = 0;
-    finalPollCount.current = 0;
 
     try {
       const res = await fetch("/api/generate-video", { method: "POST" });
@@ -425,52 +290,26 @@ export default function VideoEngine({
       setGenState("failed");
       setGenError(err instanceof Error ? err.message : "Submit error.");
     }
-  }, [pollGen, stopGenPoll, stopFinalPoll]);
-
-  // ─── Auto-finalize ─────────────────────────────────────────────────────────
-  // When raw video is ready, automatically kick off finalization.
-  // Skipped entirely in native-ending test mode — Kie already produced the
-  // full 8-second video; no FFmpeg processing is needed.
-  // The ref guard prevents double-firing if the effect runs more than once.
-
-  useEffect(() => {
-    if (
-      !nativeEndingTest &&
-      genState === "success" &&
-      rawVideoUrl !== null &&
-      finalState === "idle" &&
-      !autoFinalizeTriggered.current
-    ) {
-      autoFinalizeTriggered.current = true;
-      handleFinalize(rawVideoUrl);
-    }
-  }, [nativeEndingTest, genState, rawVideoUrl, finalState, handleFinalize]);
+  }, [pollGen, stopGenPoll]);
 
   // ─── Derived ───────────────────────────────────────────────────────────────
 
-  const genRunning = ["submitting", "waiting", "queuing", "generating"].includes(genState);
-  const finalRunning = [
-    "starting",
-    "pending",
-    "processing",
-    "appending_endcard",
-    "uploading",
-  ].includes(finalState);
+  const genRunning = [
+    "submitting",
+    "waiting",
+    "queuing",
+    "generating",
+  ].includes(genState);
 
-  // "Bridge" state: raw video is ready, auto-finalize useEffect hasn't fired yet.
-  // Not applicable in native-ending test mode (no finalization step).
-  const waitingToFinalize =
-    !nativeEndingTest &&
-    genState === "success" &&
-    rawVideoUrl !== null &&
-    finalState === "idle";
-
-  const isRunning = genRunning || finalRunning || waitingToFinalize;
-  const progressLabel = getProgressLabel(genState, finalState, nativeEndingTest);
+  const progressLabel = getProgressLabel(genState);
 
   const statusRows = [
     { label: "Kie.ai Seedance 2.0", status: "Connected", active: true },
-    { label: "Got Jesus? Logo End Card", status: "Asset Ready", active: true },
+    {
+      label: "Got Jesus? Branded Ending",
+      status: "Active",
+      active: true,
+    },
     {
       label: "Blotato Social Posting",
       status: blotatoConnected ? "Connected" : "Not Connected Yet",
@@ -485,20 +324,12 @@ export default function VideoEngine({
       {/* ── Engine status card ── */}
       <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-6 bg-neutral-950">
         <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold tracking-wide text-white">
-              Cross Discovery Video Engine
-            </h2>
-            {nativeEndingTest && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-sky-950 border border-sky-800 text-sky-400 font-medium">
-                Test Mode
-              </span>
-            )}
-          </div>
+          <h2 className="text-lg font-semibold tracking-wide text-white">
+            Cross Discovery Video Engine
+          </h2>
           <p className="text-xs text-neutral-500">
-            {nativeEndingTest
-              ? `Kie.ai Seedance 2.0 Fast — 9:16 vertical — ${resolution} — 8 sec native branded ending`
-              : `Kie.ai Seedance 2.0 Fast — 9:16 vertical — ${resolution} — 7 sec montage + 1 sec end card`}
+            Kie.ai Seedance 2.0 Fast — 9:16 vertical — {resolution} — 8 sec
+            with Got Jesus branded ending
           </p>
         </div>
 
@@ -521,22 +352,20 @@ export default function VideoEngine({
           ))}
         </div>
 
-        {/* Single Generate Video button */}
+        {/* Generate Video button */}
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={isRunning}
+          disabled={genRunning}
           className="w-full py-3 px-6 rounded-lg bg-white text-black text-sm font-semibold tracking-wide hover:bg-neutral-200 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {isRunning ? "In Progress..." : "Generate Video"}
+          {genRunning ? "In Progress..." : "Generate Video"}
         </button>
 
-        {/* Unified progress spinner */}
-        {isRunning && progressLabel && (
-          <Spinner label={progressLabel} />
-        )}
+        {/* Progress spinner */}
+        {genRunning && progressLabel && <Spinner label={progressLabel} />}
 
-        {/* Generation error */}
+        {/* Error */}
         {genState === "failed" && genError && (
           <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
             <p className="text-xs text-red-400 leading-relaxed">
@@ -548,31 +377,14 @@ export default function VideoEngine({
           </div>
         )}
 
-        {/* Finalization error */}
-        {finalState === "failed" && finalError && (
-          <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
-            <p className="text-xs text-red-400 leading-relaxed">
-              <span className="font-semibold text-red-300">
-                Finalization failed:{" "}
-              </span>
-              {finalError}
-            </p>
-          </div>
-        )}
-
-        {/* Debug IDs */}
+        {/* Debug task ID */}
         {taskId && (
           <p className="text-xs text-neutral-700 font-mono">task: {taskId}</p>
         )}
-        {finalJobId && (
-          <p className="text-xs text-neutral-700 font-mono">
-            job: {finalJobId}
-          </p>
-        )}
       </div>
 
-      {/* ── Native-ending test result (bypasses FFmpeg pipeline) ── */}
-      {nativeEndingTest && genState === "success" && rawVideoUrl && (
+      {/* ── Final video result ── */}
+      {genState === "success" && videoUrl && (
         <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold tracking-wide text-white">
@@ -583,10 +395,11 @@ export default function VideoEngine({
             </span>
           </div>
 
+          {/* Main 9:16 player */}
           <div className="w-full rounded-xl overflow-hidden border border-neutral-700">
             <div className="relative w-full" style={{ aspectRatio: "9 / 16" }}>
               <video
-                src={rawVideoUrl}
+                src={videoUrl}
                 controls
                 autoPlay
                 loop
@@ -603,7 +416,7 @@ export default function VideoEngine({
                 Testing Kie-native branded ending.{" "}
               </span>
               Seedance generated this 8-second video with the Got Jesus end
-              card as the requested final frame. FFmpeg pipeline bypassed.
+              card as the requested final frame.
             </p>
           </div>
 
@@ -611,108 +424,16 @@ export default function VideoEngine({
           {autoPost && blotatoConnected && (
             <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3">
               <p className="text-xs text-amber-400/80 leading-relaxed">
-                Auto Post is ON — this reel is eligible for social posting.
+                Auto Post is ON — this reel is eligible to be sent to selected
+                social platforms. Posting integration coming in the next step.
               </p>
             </div>
           )}
 
+          {/* URL debug */}
           <p className="text-xs text-neutral-700 font-mono break-all">
-            {rawVideoUrl}
+            {videoUrl}
           </p>
-        </div>
-      )}
-
-      {/* ── Final 8-second reel (FFmpeg pipeline result) ── */}
-      {!nativeEndingTest && finalState === "complete" && finalVideoUrl && (
-        <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold tracking-wide text-white">
-              Final 8-Second Reel
-            </h2>
-            <span className="text-xs font-medium text-emerald-500">
-              Ready
-            </span>
-          </div>
-
-          {/* Main video player */}
-          <div className="w-full rounded-xl overflow-hidden border border-neutral-700">
-            <div className="relative w-full" style={{ aspectRatio: "9 / 16" }}>
-              <video
-                src={finalVideoUrl}
-                controls
-                autoPlay
-                loop
-                playsInline
-                className="absolute inset-0 w-full h-full object-contain bg-black"
-              />
-            </div>
-          </div>
-
-          {/* Pipeline summary */}
-          <div className="rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3">
-            <p className="text-xs text-neutral-400 leading-relaxed">
-              <span className="text-neutral-300 font-medium">
-                8-second final reel:{" "}
-              </span>
-              7-second Seedance montage + 1-second Got Jesus end card.
-              Saved to Supabase Storage.
-            </p>
-          </div>
-
-          {/* Auto Post eligibility note */}
-          {autoPost && blotatoConnected && (
-            <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3">
-              <p className="text-xs text-amber-400/80 leading-relaxed">
-                Auto Post is ON — this final reel is eligible to be sent to
-                selected social platforms. Posting integration coming in the
-                next step.
-              </p>
-            </div>
-          )}
-
-          {/* Final URL debug */}
-          <p className="text-xs text-neutral-700 font-mono break-all">
-            {finalVideoUrl}
-          </p>
-
-          {/* Raw Seedance Preview (collapsible) */}
-          {rawVideoUrl && (
-            <div className="border border-neutral-800 rounded-xl overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowRawPreview((v) => !v)}
-                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-neutral-900 transition-colors duration-150"
-              >
-                <span className="text-xs font-medium text-neutral-500">
-                  Raw Seedance Preview
-                </span>
-                <span className="text-xs text-neutral-700">
-                  {showRawPreview ? "Hide" : "Show"}
-                </span>
-              </button>
-              {showRawPreview && (
-                <div className="px-4 pb-4 flex flex-col gap-3 border-t border-neutral-800 bg-neutral-900/30">
-                  <div className="w-full rounded-lg overflow-hidden border border-neutral-800 mt-3">
-                    <div
-                      className="relative w-full"
-                      style={{ aspectRatio: "9 / 16" }}
-                    >
-                      <video
-                        src={rawVideoUrl}
-                        controls
-                        loop
-                        playsInline
-                        className="absolute inset-0 w-full h-full object-contain bg-black"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-neutral-700 font-mono break-all">
-                    {rawVideoUrl}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -895,9 +616,7 @@ export default function VideoEngine({
           onClick={() => setShowAdvanced((v) => !v)}
           className="w-full flex items-center justify-between px-8 py-4 text-left hover:bg-neutral-900 transition-colors duration-150"
         >
-          <span className="text-sm font-medium text-neutral-400">
-            Advanced
-          </span>
+          <span className="text-sm font-medium text-neutral-400">Advanced</span>
           <span className="text-xs text-neutral-600">
             {showAdvanced ? "Hide" : "Show"}
           </span>
@@ -937,6 +656,22 @@ export default function VideoEngine({
               <p className="text-xs text-neutral-700">
                 Source:{" "}
                 <span className="font-mono">src/lib/cross-prompt.ts</span>
+              </p>
+            </div>
+
+            {/* Old pipeline note */}
+            <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-4 py-3">
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                <span className="text-neutral-500 font-medium">
+                  FFmpeg pipeline preserved:{" "}
+                </span>
+                The old end card assembly pipeline (
+                <span className="font-mono">src/app/api/finalize-video</span>,{" "}
+                <span className="font-mono">
+                  netlify/functions/process-reel-background.ts
+                </span>
+                ) is not active in the current flow. It can be re-enabled
+                later if Kie-native endings need to be replaced.
               </p>
             </div>
           </div>

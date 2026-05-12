@@ -9,9 +9,6 @@ export default async function Home() {
   const blotatoConnected = isBlotatoConnected();
   const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
   const initialSettings = await getPostingSettings();
-  // When true: Kie generates the full 8-second video natively ending on the
-  // branded end card; FFmpeg finalization is bypassed.
-  const nativeEndingTest = process.env.KIE_NATIVE_ENDING_TEST === "true";
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-6 py-16">
@@ -34,7 +31,6 @@ export default async function Home() {
           fullPrompt={CROSS_DISCOVERY_PROMPT}
           resolution={resolution}
           initialSettings={initialSettings}
-          nativeEndingTest={nativeEndingTest}
         />
 
         {/* End Card Asset */}
@@ -83,7 +79,7 @@ export default async function Home() {
 
         {/* Footer */}
         <p className="text-xs text-neutral-600 text-center">
-          Step 5: Full prompt view, posting schedule, and Supabase settings.
+          Kie-native branded ending — 8-second single-step generation.
         </p>
       </div>
     </main>

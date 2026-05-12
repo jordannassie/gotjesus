@@ -74,9 +74,9 @@ no extra logos during the montage
 no continuous background music across the whole video`;
 
 /**
- * Appended to CROSS_DISCOVERY_PROMPT when KIE_NATIVE_ENDING_TEST=true.
- * Instructs Seedance to end the video on the provided last_frame_url image
- * (the official Got Jesus end card) without distorting it.
+ * Appended to CROSS_DISCOVERY_PROMPT when last_frame_url is used.
+ * Instructs Seedance to end on the official Got Jesus branded end card
+ * without distorting, redesigning, or replacing it.
  */
 export const CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX =
-  "\n\nThe video should naturally conclude on the provided final frame image. Do not distort or redesign the final frame image.";
+  "\n\nEnd the video by naturally concluding on the provided final frame image. The provided branded image must remain clean, readable, centered, and visually consistent. Do not distort, redesign, replace, or add extra text to the branded ending image.";
