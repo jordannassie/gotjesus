@@ -125,6 +125,61 @@ function PlatformBadge({
   );
 }
 
+// ─── PlatformRow ─────────────────────────────────────────────────────────────
+
+function PlatformRow({
+  label,
+  status,
+  submissionId,
+  publicUrl,
+  error,
+}: {
+  label: string;
+  status: string | null;
+  submissionId: string | null;
+  publicUrl: string | null;
+  error: string | null;
+}) {
+  const statusLabel = error
+    ? "Failed"
+    : submissionId
+    ? status ?? "Submitted"
+    : "Not sent";
+
+  const statusColor = error
+    ? "text-red-400"
+    : submissionId
+    ? "text-emerald-400"
+    : "text-neutral-600";
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-neutral-500 w-20 shrink-0">{label}:</span>
+        <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+        {publicUrl && (
+          <a
+            href={publicUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-sky-500 hover:text-sky-400 underline"
+          >
+            View
+          </a>
+        )}
+      </div>
+      {submissionId && submissionId !== "unknown" && (
+        <p className="text-xs text-neutral-700 font-mono pl-22 leading-relaxed">
+          ID: {submissionId}
+        </p>
+      )}
+      {error && (
+        <p className="text-xs text-red-400/70 pl-22 leading-relaxed">{error}</p>
+      )}
+    </div>
+  );
+}
+
 // ─── Reel Library Card ────────────────────────────────────────────────────────
 
 function ReelCard({
@@ -177,23 +232,57 @@ function ReelCard({
         </button>
       </div>
 
-      {/* Posted / Blotato info */}
-      <div className="flex items-center gap-3 flex-wrap">
+      {/* Per-platform posting detail */}
+      <div className="flex flex-col gap-1.5">
         <span className="text-xs text-neutral-500">
-          Posted manually:{" "}
+          Manual posting:{" "}
           <span
             className={
-              wasPosted ? "text-emerald-400 font-medium" : "text-neutral-600"
+              wasPosted
+                ? "text-emerald-400 font-medium"
+                : reel.blotato_status === "failed"
+                ? "text-red-400 font-medium"
+                : "text-neutral-600"
             }
           >
-            {wasPosted ? "Yes" : "No"}
+            {wasPosted
+              ? "Submitted to Blotato"
+              : reel.blotato_status === "failed"
+              ? "Failed to submit"
+              : "Not requested"}
           </span>
         </span>
-        {reel.blotato_status && (
-          <span className="text-xs text-neutral-500">
-            Blotato:{" "}
-            <span className="text-neutral-400">{reel.blotato_status}</span>
-          </span>
+
+        {(reel.instagram_enabled || reel.tiktok_enabled || reel.youtube_enabled) && (
+          <div className="flex flex-col gap-0.5 pl-2 border-l border-neutral-800">
+            {reel.instagram_enabled && (
+              <PlatformRow
+                label="Instagram"
+                status={reel.instagram_post_status}
+                submissionId={reel.instagram_post_submission_id}
+                publicUrl={reel.instagram_post_url}
+                error={reel.instagram_error}
+              />
+            )}
+            {reel.tiktok_enabled && (
+              <PlatformRow
+                label="TikTok"
+                status={reel.tiktok_post_status}
+                submissionId={reel.tiktok_post_submission_id}
+                publicUrl={reel.tiktok_post_url}
+                error={reel.tiktok_error}
+              />
+            )}
+            {reel.youtube_enabled && (
+              <PlatformRow
+                label="YouTube"
+                status={reel.youtube_post_status}
+                submissionId={reel.youtube_post_submission_id}
+                publicUrl={reel.youtube_post_url}
+                error={reel.youtube_error}
+              />
+            )}
+          </div>
         )}
       </div>
 

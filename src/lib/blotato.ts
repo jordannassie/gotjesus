@@ -1,23 +1,16 @@
 /**
- * Blotato API client — server-side only. Never import this in client components.
+ * Blotato API v2 client — server-side only.
+ *
+ * API base: https://backend.blotato.com/v2
+ * Auth header: blotato-api-key (NOT Authorization: Bearer)
+ * Publish endpoint: POST /v2/posts  (no separate media upload needed — pass URL directly)
+ * Status endpoint: GET  /v2/posts/{postSubmissionId}
  *
  * Required env vars:
  *   BLOTATO_API_KEY
  *   BLOTATO_INSTAGRAM_ACCOUNT_ID
  *   BLOTATO_YOUTUBE_ACCOUNT_ID
  *   BLOTATO_TIKTOK_ACCOUNT_ID
- *
- * Every post uses GOT_JESUS_DEFAULT_SOCIAL_CAPTION from src/lib/social-caption.ts.
- * Do not pass a different caption unless that constant has been explicitly changed.
- *
- * POSTING PATHS:
- *   MANUAL (Auto Post ON):
- *     After reel is saved → uploadMedia(savedVideoUrl) → publishToAll(mediaId, platforms)
- *     No scheduledTime — posts immediately.
- *
- *   SCHEDULED (daily-scheduler-background):
- *     Same uploadMedia → publishToAll() flow, but pass scheduledTime (ISO 8601 UTC).
- *     Convert Pacific posting_times to UTC via pacificTimeToUTCISO() in the scheduler.
  */
 
 import { GOT_JESUS_DEFAULT_SOCIAL_CAPTION } from "@/lib/social-caption";
@@ -28,24 +21,17 @@ const BLOTATO_BASE_URL = "https://backend.blotato.com";
 
 export type BlotatoPlatform = "instagram" | "youtube" | "tiktok";
 
-export interface BlotatoUploadResponse {
-  mediaId: string;
+export type BlotatoPostStatus = "in-progress" | "scheduled" | "published" | "failed";
+
+export interface BlotatoPostStatusResponse {
+  status: BlotatoPostStatus;
+  publicUrl?: string;
+  errorMessage?: string;
 }
 
-export interface BlotatoPublishRequest {
-  mediaId: string;
-  accountId: string;
+export interface BlotatoPublishResult {
   platform: BlotatoPlatform;
-  caption: string;
-  /** ISO 8601 UTC datetime. Omit for immediate posting. */
-  scheduledTime?: string;
-}
-
-export interface BlotatoPublishResponse {
-  /** The Blotato post / submission ID returned after scheduling. */
-  id?: string;
-  postId?: string;
-  submissionId?: string;
+  postSubmissionId: string;
 }
 
 // ─── Connection check ─────────────────────────────────────────────────────────
@@ -83,74 +69,133 @@ function getApiKey(): string {
 
 function authHeaders(): HeadersInit {
   return {
-    Authorization: `Bearer ${getApiKey()}`,
+    "blotato-api-key": getApiKey(),
     "Content-Type": "application/json",
   };
+}
+
+/**
+ * Build the platform-specific `target` object for the Blotato v2 posts API.
+ * Each platform has its own required fields.
+ */
+function buildTarget(platform: BlotatoPlatform): Record<string, unknown> {
+  if (platform === "instagram") {
+    return {
+      targetType: "instagram",
+      mediaType: "reel",
+    };
+  }
+  if (platform === "tiktok") {
+    return {
+      targetType: "tiktok",
+      privacyLevel: "PUBLIC_TO_EVERYONE",
+      disabledComments: false,
+      disabledDuet: false,
+      disabledStitch: false,
+      isBrandedContent: false,
+      isYourBrand: false,
+      isAiGenerated: true,
+    };
+  }
+  if (platform === "youtube") {
+    return {
+      targetType: "youtube",
+      title: "Jesus Loves You! | Got Jesus",
+      privacyStatus: "public",
+      shouldNotifySubscribers: true,
+      containsSyntheticMedia: true,
+    };
+  }
+  throw new Error(`Unknown Blotato platform: ${platform}`);
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 /**
- * Upload a video by public URL to Blotato's media library.
- * Returns the Blotato mediaId used when publishing posts.
- * Pass the permanent Supabase Storage URL — not the temporary Kie URL.
- */
-export async function uploadMedia(videoUrl: string): Promise<string> {
-  const response = await fetch(`${BLOTATO_BASE_URL}/api/media/upload`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ url: videoUrl }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Blotato uploadMedia HTTP ${response.status}: ${text}`);
-  }
-
-  const json = (await response.json()) as BlotatoUploadResponse;
-  return json.mediaId;
-}
-
-/**
- * Publish a video to a single platform via Blotato.
- * Returns the Blotato submission ID for tracking post status.
+ * Publish a video to a single platform via Blotato v2.
+ *
+ * Passes the Supabase permanent video URL directly in mediaUrls — no
+ * separate media upload step is required.
+ *
+ * Returns the postSubmissionId for status polling.
  *
  * For immediate posting: omit scheduledTime.
- * For scheduled posting: pass scheduledTime as ISO 8601 UTC string.
+ * For scheduled posting: pass scheduledTime as ISO 8601 UTC string
+ *   (must be a sibling of `post`, not nested inside it).
  */
-export async function publishPost(req: BlotatoPublishRequest): Promise<string> {
-  const response = await fetch(`${BLOTATO_BASE_URL}/api/posts/publish`, {
+export async function publishPost(
+  videoUrl: string,
+  platform: BlotatoPlatform,
+  accountId: string,
+  caption: string,
+  scheduledTime?: string
+): Promise<string> {
+  const body: Record<string, unknown> = {
+    post: {
+      accountId,
+      content: {
+        text: caption,
+        mediaUrls: [videoUrl],
+        platform,
+      },
+      target: buildTarget(platform),
+    },
+    // scheduledTime must be a top-level sibling of `post`, not nested
+    ...(scheduledTime ? { scheduledTime } : {}),
+  };
+
+  console.log(`[blotato] POST /v2/posts platform=${platform} accountId=${accountId}`);
+
+  const res = await fetch(`${BLOTATO_BASE_URL}/v2/posts`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({
-      mediaId: req.mediaId,
-      accountId: req.accountId,
-      platform: req.platform,
-      caption: req.caption,
-      ...(req.scheduledTime ? { scheduledTime: req.scheduledTime } : {}),
-    }),
+    body: JSON.stringify(body),
   });
 
-  if (!response.ok) {
-    const text = await response.text();
+  if (!res.ok) {
+    const text = await res.text();
     throw new Error(
-      `Blotato publishPost [${req.platform}] HTTP ${response.status}: ${text}`
+      `Blotato POST /v2/posts [${platform}] HTTP ${res.status}: ${text}`
     );
   }
 
-  const json = (await response.json()) as BlotatoPublishResponse;
-  // Try common Blotato response field names for the submission ID
-  return json.id ?? json.postId ?? json.submissionId ?? "unknown";
+  const json = (await res.json()) as { postSubmissionId?: string };
+  const id = json.postSubmissionId ?? "unknown";
+  console.log(`[blotato] Submitted ${platform} → postSubmissionId=${id}`);
+  return id;
 }
 
 /**
- * Upload media and publish to all requested platforms in parallel.
- * Returns a map of platform → Blotato submission ID.
+ * Poll the status of a submitted Blotato post.
+ * Returns status, publicUrl (if published), and errorMessage (if failed).
+ */
+export async function getPostStatus(
+  postSubmissionId: string
+): Promise<BlotatoPostStatusResponse> {
+  const res = await fetch(
+    `${BLOTATO_BASE_URL}/v2/posts/${postSubmissionId}`,
+    {
+      headers: authHeaders(),
+      cache: "no-store",
+    } as RequestInit
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Blotato GET /v2/posts/${postSubmissionId} HTTP ${res.status}: ${text}`
+    );
+  }
+
+  return (await res.json()) as BlotatoPostStatusResponse;
+}
+
+/**
+ * Publish a video to all requested platforms and return per-platform results.
  *
- * Caption defaults to GOT_JESUS_DEFAULT_SOCIAL_CAPTION.
- * Pass scheduledTime (ISO 8601 UTC) for scheduled posts; omit for immediate.
  * Skips any platform whose account ID is not configured in env vars.
- * Skips any platform not in the provided platforms array.
+ * Caption defaults to GOT_JESUS_DEFAULT_SOCIAL_CAPTION.
+ * Pass scheduledTime for scheduled posts; omit for immediate publishing.
  */
 export async function publishToAll(
   videoUrl: string,
@@ -159,20 +204,18 @@ export async function publishToAll(
   scheduledTime?: string
 ): Promise<Partial<Record<BlotatoPlatform, string>>> {
   const accountIds = getBlotatoAccountIds();
-  const mediaId = await uploadMedia(videoUrl);
-
   const results: Partial<Record<BlotatoPlatform, string>> = {};
 
   const tasks = platforms
     .filter((p) => accountIds[p])
     .map(async (p) => {
-      const submissionId = await publishPost({
-        mediaId,
-        accountId: accountIds[p]!,
-        platform: p,
+      const submissionId = await publishPost(
+        videoUrl,
+        p,
+        accountIds[p]!,
         caption,
-        scheduledTime,
-      });
+        scheduledTime
+      );
       results[p] = submissionId;
     });
 

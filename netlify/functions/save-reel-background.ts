@@ -83,28 +83,17 @@ async function downloadAndUpload(
   return data.publicUrl;
 }
 
-// ─── Blotato helpers (inlined) ────────────────────────────────────────────────
+// ─── Blotato helpers (inlined — v2 API) ──────────────────────────────────────
+//
+// Auth: blotato-api-key header (NOT Authorization: Bearer)
+// Publish: POST /v2/posts — pass video URL directly in mediaUrls, no separate upload
+// Status: GET /v2/posts/{postSubmissionId}
 
-function blotatoHeaders(): HeadersInit {
+function blotatoApiHeaders(): HeadersInit {
   return {
-    Authorization: `Bearer ${process.env.BLOTATO_API_KEY}`,
+    "blotato-api-key": process.env.BLOTATO_API_KEY!,
     "Content-Type": "application/json",
   };
-}
-
-async function blotatoUploadMedia(videoUrl: string): Promise<string> {
-  const res = await fetch(`${BLOTATO_BASE_URL}/api/media/upload`, {
-    method: "POST",
-    headers: blotatoHeaders(),
-    body: JSON.stringify({ url: videoUrl }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Blotato uploadMedia HTTP ${res.status}: ${text}`);
-  }
-  const json = (await res.json()) as { mediaId?: string };
-  if (!json.mediaId) throw new Error("Blotato uploadMedia: no mediaId returned");
-  return json.mediaId;
 }
 
 type BlotatoPlatform = "instagram" | "tiktok" | "youtube";
@@ -115,31 +104,71 @@ function getAccountId(platform: BlotatoPlatform): string | undefined {
   if (platform === "youtube") return process.env.BLOTATO_YOUTUBE_ACCOUNT_ID;
 }
 
-async function blotatoPublishPost(
-  mediaId: string,
+function buildBlotatoTarget(platform: BlotatoPlatform): Record<string, unknown> {
+  if (platform === "instagram") {
+    return { targetType: "instagram", mediaType: "reel" };
+  }
+  if (platform === "tiktok") {
+    return {
+      targetType: "tiktok",
+      privacyLevel: "PUBLIC_TO_EVERYONE",
+      disabledComments: false,
+      disabledDuet: false,
+      disabledStitch: false,
+      isBrandedContent: false,
+      isYourBrand: false,
+      isAiGenerated: true,
+    };
+  }
+  // youtube
+  return {
+    targetType: "youtube",
+    title: "Jesus Loves You! | Got Jesus",
+    privacyStatus: "public",
+    shouldNotifySubscribers: true,
+    containsSyntheticMedia: true,
+  };
+}
+
+async function blotatoPublish(
+  videoUrl: string,
   platform: BlotatoPlatform,
   scheduledTime?: string
 ): Promise<string> {
   const accountId = getAccountId(platform);
-  if (!accountId) throw new Error(`No account ID configured for ${platform}`);
+  if (!accountId) throw new Error(`No Blotato account ID configured for ${platform}`);
 
-  const res = await fetch(`${BLOTATO_BASE_URL}/api/posts/publish`, {
-    method: "POST",
-    headers: blotatoHeaders(),
-    body: JSON.stringify({
-      mediaId,
+  const body: Record<string, unknown> = {
+    post: {
       accountId,
-      platform,
-      caption: GOT_JESUS_CAPTION,
-      ...(scheduledTime ? { scheduledTime } : {}),
-    }),
+      content: {
+        text: GOT_JESUS_CAPTION,
+        mediaUrls: [videoUrl],
+        platform,
+      },
+      target: buildBlotatoTarget(platform),
+    },
+    // scheduledTime is a TOP-LEVEL sibling of `post` per Blotato v2 spec
+    ...(scheduledTime ? { scheduledTime } : {}),
+  };
+
+  console.log(`[manual-post] Calling Blotato POST /v2/posts for ${platform}`);
+
+  const res = await fetch(`${BLOTATO_BASE_URL}/v2/posts`, {
+    method: "POST",
+    headers: blotatoApiHeaders(),
+    body: JSON.stringify(body),
   });
+
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Blotato publish [${platform}] HTTP ${res.status}: ${text}`);
+    throw new Error(`Blotato POST /v2/posts [${platform}] HTTP ${res.status}: ${text}`);
   }
-  const json = (await res.json()) as { id?: string; postId?: string; submissionId?: string };
-  return json.id ?? json.postId ?? json.submissionId ?? "unknown";
+
+  const json = (await res.json()) as { postSubmissionId?: string };
+  const id = json.postSubmissionId ?? "unknown";
+  console.log(`[manual-post] Blotato accepted ${platform} → postSubmissionId=${id}`);
+  return id;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -172,35 +201,60 @@ const handler: Handler = async (event: HandlerEvent) => {
     const savedVideoUrl = await downloadAndUpload(kieVideoUrl, reelId);
     await updateReel(reelId, { saved_video_url: savedVideoUrl, status: "ready" });
 
-    // ── Step 2: Blotato posting (if autoPost) ─────────────────────────────────
-    if (autoPost && platforms.length > 0 && process.env.BLOTATO_API_KEY) {
-      await updateReel(reelId, { status: "posting" });
-      console.log(`[save-reel-bg] Posting reel ${reelId} to ${platforms.join(", ")}`);
+    // ── Step 2: Blotato posting (if autoPost / manual_post_enabled) ──────────
+    if (!autoPost) {
+      console.log(`[manual-post] Manual posting disabled — skipping Blotato`);
+    } else if (platforms.length === 0) {
+      console.log(`[manual-post] No platforms selected — skipping Blotato`);
+    } else if (!process.env.BLOTATO_API_KEY) {
+      console.log(`[manual-post] BLOTATO_API_KEY not set — skipping Blotato`);
+    } else {
+      console.log(`[manual-post] Manual posting enabled`);
+      console.log(`[manual-post] Selected platforms: ${platforms.join(", ")}`);
+      console.log(`[manual-post] Saved video URL: ${savedVideoUrl}`);
+      console.log(`[manual-post] Calling Blotato...`);
 
-      const mediaId = await blotatoUploadMedia(savedVideoUrl);
+      await updateReel(reelId, { status: "posting" });
+
       const submissionIds: Record<string, string> = {};
+      const platformStatuses: Record<string, string> = {};
+      const platformErrors: Record<string, string> = {};
 
       for (const platform of platforms as BlotatoPlatform[]) {
         try {
-          const id = await blotatoPublishPost(mediaId, platform, scheduledTime);
+          const id = await blotatoPublish(savedVideoUrl, platform, scheduledTime);
           submissionIds[platform] = id;
-          console.log(`[save-reel-bg] Posted to ${platform}: ${id}`);
+          platformStatuses[platform] = "submitted";
         } catch (err) {
-          console.error(`[save-reel-bg] Failed to post to ${platform}:`, err);
+          const msg = err instanceof Error ? err.message : String(err);
+          platformErrors[platform] = msg;
+          platformStatuses[platform] = "failed";
+          console.error(`[manual-post] Failed to post to ${platform}:`, msg);
         }
       }
 
+      console.log(`[manual-post] Blotato submission IDs:`, JSON.stringify(submissionIds));
+      if (Object.keys(platformErrors).length > 0) {
+        console.error(`[manual-post] Blotato errors:`, JSON.stringify(platformErrors));
+      }
+
       const isScheduled = Boolean(scheduledTime);
+      const anySucceeded = Object.keys(submissionIds).length > 0;
+
       await updateReel(reelId, {
-        status: isScheduled ? "scheduled" : "posted",
-        blotato_status: "submitted",
+        status: isScheduled ? "scheduled" : anySucceeded ? "posted" : "ready",
+        blotato_status: anySucceeded ? "submitted" : "failed",
         instagram_post_submission_id: submissionIds.instagram ?? null,
         tiktok_post_submission_id: submissionIds.tiktok ?? null,
         youtube_post_submission_id: submissionIds.youtube ?? null,
+        instagram_post_status: platformStatuses.instagram ?? null,
+        tiktok_post_status: platformStatuses.tiktok ?? null,
+        youtube_post_status: platformStatuses.youtube ?? null,
+        instagram_error: platformErrors.instagram ?? null,
+        tiktok_error: platformErrors.tiktok ?? null,
+        youtube_error: platformErrors.youtube ?? null,
       });
-      console.log(`[save-reel-bg] Reel ${reelId} ${isScheduled ? "scheduled" : "posted"}`);
-    } else {
-      console.log(`[save-reel-bg] Reel ${reelId} saved (no auto-post)`);
+      console.log(`[manual-post] Reel ${reelId} ${isScheduled ? "scheduled" : anySucceeded ? "posted" : "posting failed"}`);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

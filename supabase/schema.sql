@@ -62,6 +62,17 @@ create table if not exists gotjesus_reels (
   tiktok_post_submission_id       text                    ,
   youtube_post_submission_id      text                    ,
 
+  -- Per-platform posting detail
+  instagram_post_status           text                    ,
+  tiktok_post_status              text                    ,
+  youtube_post_status             text                    ,
+  instagram_post_url              text                    ,
+  tiktok_post_url                 text                    ,
+  youtube_post_url                text                    ,
+  instagram_error                 text                    ,
+  tiktok_error                    text                    ,
+  youtube_error                   text                    ,
+
   -- Error tracking
   error_message                   text
 );

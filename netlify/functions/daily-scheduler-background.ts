@@ -237,28 +237,17 @@ async function downloadAndUpload(
   return data.publicUrl;
 }
 
-// ─── Blotato helpers (inlined) ────────────────────────────────────────────────
+// ─── Blotato helpers (inlined — v2 API) ──────────────────────────────────────
+//
+// Auth: blotato-api-key header (NOT Authorization: Bearer)
+// Publish: POST /v2/posts — pass video URL directly in mediaUrls, no upload step
+// scheduledTime must be top-level (sibling of `post`), NOT nested inside `post`
 
-function blotatoHeaders(): HeadersInit {
+function blotatoApiHeaders(): HeadersInit {
   return {
-    Authorization: `Bearer ${process.env.BLOTATO_API_KEY}`,
+    "blotato-api-key": process.env.BLOTATO_API_KEY!,
     "Content-Type": "application/json",
   };
-}
-
-async function blotatoUploadMedia(videoUrl: string): Promise<string> {
-  const res = await fetch(`${BLOTATO_BASE_URL}/api/media/upload`, {
-    method: "POST",
-    headers: blotatoHeaders(),
-    body: JSON.stringify({ url: videoUrl }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Blotato uploadMedia HTTP ${res.status}: ${text}`);
-  }
-  const json = (await res.json()) as { mediaId?: string };
-  if (!json.mediaId) throw new Error("Blotato uploadMedia: no mediaId");
-  return json.mediaId;
 }
 
 type Platform = "instagram" | "tiktok" | "youtube";
@@ -269,30 +258,61 @@ function getAccountId(platform: Platform): string | undefined {
   if (platform === "youtube") return process.env.BLOTATO_YOUTUBE_ACCOUNT_ID;
 }
 
+function buildBlotatoTarget(platform: Platform): Record<string, unknown> {
+  if (platform === "instagram") return { targetType: "instagram", mediaType: "reel" };
+  if (platform === "tiktok") {
+    return {
+      targetType: "tiktok",
+      privacyLevel: "PUBLIC_TO_EVERYONE",
+      disabledComments: false,
+      disabledDuet: false,
+      disabledStitch: false,
+      isBrandedContent: false,
+      isYourBrand: false,
+      isAiGenerated: true,
+    };
+  }
+  return {
+    targetType: "youtube",
+    title: "Jesus Loves You! | Got Jesus",
+    privacyStatus: "public",
+    shouldNotifySubscribers: true,
+    containsSyntheticMedia: true,
+  };
+}
+
 async function blotatoPublish(
-  mediaId: string,
+  videoUrl: string,
   platform: Platform,
   scheduledTime: string
 ): Promise<string> {
   const accountId = getAccountId(platform);
-  if (!accountId) throw new Error(`No account ID for ${platform}`);
-  const res = await fetch(`${BLOTATO_BASE_URL}/api/posts/publish`, {
-    method: "POST",
-    headers: blotatoHeaders(),
-    body: JSON.stringify({
-      mediaId,
+  if (!accountId) throw new Error(`No Blotato account ID for ${platform}`);
+
+  const body: Record<string, unknown> = {
+    post: {
       accountId,
-      platform,
-      caption: GOT_JESUS_CAPTION,
-      scheduledTime,
-    }),
+      content: {
+        text: GOT_JESUS_CAPTION,
+        mediaUrls: [videoUrl],
+        platform,
+      },
+      target: buildBlotatoTarget(platform),
+    },
+    scheduledTime, // top-level, NOT nested inside post
+  };
+
+  const res = await fetch(`${BLOTATO_BASE_URL}/v2/posts`, {
+    method: "POST",
+    headers: blotatoApiHeaders(),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Blotato publish [${platform}] HTTP ${res.status}: ${text}`);
+    throw new Error(`Blotato POST /v2/posts [${platform}] HTTP ${res.status}: ${text}`);
   }
-  const json = (await res.json()) as { id?: string; postId?: string; submissionId?: string };
-  return json.id ?? json.postId ?? json.submissionId ?? "unknown";
+  const json = (await res.json()) as { postSubmissionId?: string };
+  return json.postSubmissionId ?? "unknown";
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -363,11 +383,10 @@ const handler: Handler = async () => {
       await updateReelRow(supabase, reelId, { saved_video_url: savedVideoUrl, status: "posting" });
 
       // Post to Blotato with scheduled time
-      const mediaId = await blotatoUploadMedia(savedVideoUrl);
       const submissionIds: Record<string, string> = {};
       for (const platform of enabledPlatforms) {
         try {
-          const id = await blotatoPublish(mediaId, platform, scheduledForISO);
+          const id = await blotatoPublish(savedVideoUrl, platform, scheduledForISO);
           submissionIds[platform] = id;
           console.log(`[scheduler] Scheduled to ${platform}: ${id}`);
         } catch (err) {
