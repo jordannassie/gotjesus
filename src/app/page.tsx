@@ -1,7 +1,12 @@
 import Image from "next/image";
 import VideoEngine from "@/components/VideoEngine";
+import { isBlotatoConnected } from "@/lib/blotato";
+import { CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
 
 export default function Home() {
+  // Checked server-side — env vars never reach the client
+  const blotatoConnected = isBlotatoConnected();
+
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-6 py-16">
       <div className="w-full max-w-xl flex flex-col items-center gap-10">
@@ -16,10 +21,13 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Video engine — interactive, client component */}
-        <VideoEngine />
+        {/* Interactive engine — client component, server-provided props */}
+        <VideoEngine
+          blotatoConnected={blotatoConnected}
+          promptSummary={CROSS_DISCOVERY_PROMPT_SUMMARY}
+        />
 
-        {/* End Card Asset Section */}
+        {/* End Card Asset */}
         <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-6 bg-neutral-950">
           <div className="flex flex-col gap-1">
             <h2 className="text-lg font-semibold tracking-wide text-white">
@@ -63,9 +71,9 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Footer note */}
+        {/* Footer */}
         <p className="text-xs text-neutral-600 text-center">
-          Step 2: Kie.ai Seedance 2.0 connected.
+          Step 3: Social posting toggles and Blotato connection prep.
         </p>
       </div>
     </main>

@@ -2,6 +2,13 @@
  * The canonical cross-discovery prompt used for every GotJesus Reel Engine video.
  * This generates the raw montage only. The official end card is appended separately via FFmpeg.
  */
+
+/**
+ * One-line summary shown in the Advanced UI section. Never expose the full prompt to the client.
+ */
+export const CROSS_DISCOVERY_PROMPT_SUMMARY =
+  "8-second vertical 9:16 cross-discovery montage — 8 hard-cut clips, each showing an abstract cross shape embedded in everyday life with a person present. Cinematic, vintage, ambient audio per clip. No religious imagery.";
+
 export const CROSS_DISCOVERY_PROMPT = `Create an 8-second vertical 9:16 viral social media video made of 8 completely separate clips, about 1 second each.
 
 Core rules:
