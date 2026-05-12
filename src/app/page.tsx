@@ -6,6 +6,7 @@ import { CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
 export default function Home() {
   // Checked server-side — env vars never reach the client
   const blotatoConnected = isBlotatoConnected();
+  const resolution = process.env.KIE_VIDEO_RESOLUTION || "720p";
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-6 py-16">
@@ -25,6 +26,7 @@ export default function Home() {
         <VideoEngine
           blotatoConnected={blotatoConnected}
           promptSummary={CROSS_DISCOVERY_PROMPT_SUMMARY}
+          resolution={resolution}
         />
 
         {/* End Card Asset */}
@@ -73,7 +75,7 @@ export default function Home() {
 
         {/* Footer */}
         <p className="text-xs text-neutral-600 text-center">
-          Step 3: Social posting toggles and Blotato connection prep.
+          Step 4: End card assembly and Supabase video storage.
         </p>
       </div>
     </main>

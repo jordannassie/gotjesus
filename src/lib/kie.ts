@@ -81,7 +81,7 @@ export async function createVideoTask(prompt: string): Promise<string> {
         prompt,
         aspect_ratio: "9:16",
         resolution: process.env.KIE_VIDEO_RESOLUTION || "720p",
-        duration: 8,
+        duration: 7,
         generate_audio: true,
       },
     }),

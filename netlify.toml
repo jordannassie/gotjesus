@@ -7,4 +7,11 @@
 
 # Netlify automatically installs @netlify/plugin-nextjs when a Next.js project
 # is detected. That plugin converts App Router API routes into Netlify Functions,
-# which is required for /api/generate-video to work in production.
+# which is required for /api/generate-video and /api/finalize-video to work.
+
+# ── Background Function config ────────────────────────────────────────────────
+# process-reel-background runs for up to 15 minutes (Netlify background limit).
+# ffmpeg-static is marked external so its binary file is preserved at a known
+# path rather than being bundled by esbuild (which would strip the binary).
+[functions."process-reel-background"]
+  external_node_modules = ["ffmpeg-static"]
