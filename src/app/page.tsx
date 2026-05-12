@@ -1,12 +1,14 @@
 import Image from "next/image";
 import VideoEngine from "@/components/VideoEngine";
 import { isBlotatoConnected } from "@/lib/blotato";
-import { CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
+import { CROSS_DISCOVERY_PROMPT, CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
+import { getPostingSettings } from "@/lib/posting-settings";
 
-export default function Home() {
-  // Checked server-side — env vars never reach the client
+export default async function Home() {
+  // All env/server logic runs here — nothing secret leaks to the client bundle
   const blotatoConnected = isBlotatoConnected();
   const resolution = process.env.KIE_VIDEO_RESOLUTION || "720p";
+  const initialSettings = await getPostingSettings();
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-6 py-16">
@@ -26,7 +28,9 @@ export default function Home() {
         <VideoEngine
           blotatoConnected={blotatoConnected}
           promptSummary={CROSS_DISCOVERY_PROMPT_SUMMARY}
+          fullPrompt={CROSS_DISCOVERY_PROMPT}
           resolution={resolution}
+          initialSettings={initialSettings}
         />
 
         {/* End Card Asset */}
@@ -75,7 +79,7 @@ export default function Home() {
 
         {/* Footer */}
         <p className="text-xs text-neutral-600 text-center">
-          Step 4: End card assembly and Supabase video storage.
+          Step 5: Full prompt view, posting schedule, and Supabase settings.
         </p>
       </div>
     </main>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import type { PostingSettings } from "@/lib/posting-settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,7 +27,9 @@ type FinalizationState =
 interface VideoEngineProps {
   blotatoConnected: boolean;
   promptSummary: string;
+  fullPrompt: string;
   resolution: string;
+  initialSettings: PostingSettings;
 }
 
 // ─── Labels ───────────────────────────────────────────────────────────────────
@@ -55,6 +58,15 @@ const FINAL_LABELS: Record<FinalizationState, string> = {
 const POLL_INTERVAL_MS = 6000;
 const MAX_GEN_POLLS = 120; // 12 min
 const MAX_FINAL_POLLS = 180; // 18 min
+
+// Default posting times by posts-per-day count
+const DEFAULT_TIMES: Record<number, string[]> = {
+  1: ["12:00"],
+  2: ["09:00", "19:00"],
+  3: ["09:00", "13:00", "19:00"],
+  4: ["08:00", "12:00", "17:00", "21:00"],
+  5: ["08:00", "11:00", "14:00", "17:00", "20:00"],
+};
 
 // ─── Toggle ───────────────────────────────────────────────────────────────────
 
@@ -102,7 +114,9 @@ function Spinner({ label }: { label: string }) {
 export default function VideoEngine({
   blotatoConnected,
   promptSummary,
+  fullPrompt,
   resolution,
+  initialSettings,
 }: VideoEngineProps) {
   // Generation
   const [genState, setGenState] = useState<GenerationState>("idle");
@@ -116,19 +130,96 @@ export default function VideoEngine({
   const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
   const [finalError, setFinalError] = useState<string | null>(null);
 
-  // Post toggles
-  const [autoPost, setAutoPost] = useState(false);
-  const [postInstagram, setPostInstagram] = useState(true);
-  const [postTiktok, setPostTiktok] = useState(true);
-  const [postYoutube, setPostYoutube] = useState(true);
+  // Post toggles — initialized from saved settings
+  const [autoPost, setAutoPost] = useState(initialSettings.autoPostEnabled);
+  const [postInstagram, setPostInstagram] = useState(initialSettings.instagramEnabled);
+  const [postTiktok, setPostTiktok] = useState(initialSettings.tiktokEnabled);
+  const [postYoutube, setPostYoutube] = useState(initialSettings.youtubeEnabled);
 
-  // Advanced
+  // Schedule settings — initialized from saved settings
+  const [postsPerDay, setPostsPerDay] = useState(initialSettings.postsPerDay);
+  const [postingTimes, setPostingTimes] = useState<string[]>(
+    initialSettings.postingTimes.length > 0
+      ? initialSettings.postingTimes
+      : DEFAULT_TIMES[initialSettings.postsPerDay] ?? DEFAULT_TIMES[3]
+  );
+
+  // Schedule save state
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Copy prompt state
+  const [promptCopied, setPromptCopied] = useState(false);
+
+  // Advanced section
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const genTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const genPollCount = useRef(0);
   const finalPollCount = useRef(0);
+
+  // ─── Posts-per-day change ──────────────────────────────────────────────────
+
+  const handlePostsPerDayChange = useCallback((n: number) => {
+    setPostsPerDay(n);
+    setPostingTimes(DEFAULT_TIMES[n] ?? DEFAULT_TIMES[3]);
+    setSaved(false);
+  }, []);
+
+  // ─── Save schedule ─────────────────────────────────────────────────────────
+
+  const handleSaveSchedule = useCallback(async () => {
+    setSaving(true);
+    setSaved(false);
+    setSaveError(null);
+    try {
+      const res = await fetch("/api/posting-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          autoPostEnabled: autoPost,
+          instagramEnabled: postInstagram,
+          tiktokEnabled: postTiktok,
+          youtubeEnabled: postYoutube,
+          postsPerDay,
+          postingTimes,
+          timezone: "America/Los_Angeles",
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  }, [autoPost, postInstagram, postTiktok, postYoutube, postsPerDay, postingTimes]);
+
+  // ─── Copy full prompt ──────────────────────────────────────────────────────
+
+  const handleCopyPrompt = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(fullPrompt);
+    } catch {
+      // Fallback for environments where clipboard API is unavailable
+      const ta = document.createElement("textarea");
+      ta.value = fullPrompt;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setPromptCopied(true);
+    setTimeout(() => setPromptCopied(false), 2000);
+  }, [fullPrompt]);
 
   // ─── Generation polling ────────────────────────────────────────────────────
 
@@ -320,7 +411,13 @@ export default function VideoEngine({
   // ─── Derived ───────────────────────────────────────────────────────────────
 
   const genRunning = ["submitting", "waiting", "queuing", "generating"].includes(genState);
-  const finalRunning = ["starting", "pending", "processing", "appending_endcard", "uploading"].includes(finalState);
+  const finalRunning = [
+    "starting",
+    "pending",
+    "processing",
+    "appending_endcard",
+    "uploading",
+  ].includes(finalState);
 
   const statusRows = [
     { label: "Kie.ai Seedance 2.0", status: "Connected", active: true },
@@ -435,7 +532,13 @@ export default function VideoEngine({
             disabled={finalRunning}
             className="w-full py-3 px-6 rounded-lg bg-white text-black text-sm font-semibold tracking-wide hover:bg-neutral-200 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {finalRunning ? FINAL_LABELS[finalState] : FINAL_LABELS[finalState === "complete" || finalState === "failed" ? finalState : "idle"]}
+            {finalRunning
+              ? FINAL_LABELS[finalState]
+              : FINAL_LABELS[
+                  finalState === "complete" || finalState === "failed"
+                    ? finalState
+                    : "idle"
+                ]}
           </button>
 
           {finalRunning && <Spinner label={FINAL_LABELS[finalState]} />}
@@ -492,6 +595,17 @@ export default function VideoEngine({
             </p>
           </div>
 
+          {/* Auto Post eligibility note */}
+          {autoPost && blotatoConnected && (
+            <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3">
+              <p className="text-xs text-amber-400/80 leading-relaxed">
+                Auto Post is ON — this final reel is eligible to be sent to
+                selected social platforms. Posting integration coming in the
+                next step.
+              </p>
+            </div>
+          )}
+
           <p className="text-xs text-neutral-700 font-mono break-all">
             {finalVideoUrl}
           </p>
@@ -511,6 +625,7 @@ export default function VideoEngine({
           </p>
         </div>
 
+        {/* Platform toggles */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between py-3 px-4 rounded-lg border border-neutral-800 bg-neutral-900">
             <div className="flex flex-col gap-0.5">
@@ -521,16 +636,34 @@ export default function VideoEngine({
             </div>
             <Toggle
               checked={autoPost}
-              onChange={() => setAutoPost((v) => !v)}
+              onChange={() => {
+                setAutoPost((v) => !v);
+                setSaved(false);
+              }}
               disabled={!blotatoConnected}
             />
           </div>
 
           {(
             [
-              { key: "instagram", label: "Instagram", checked: postInstagram, set: setPostInstagram },
-              { key: "tiktok", label: "TikTok", checked: postTiktok, set: setPostTiktok },
-              { key: "youtube", label: "YouTube", checked: postYoutube, set: setPostYoutube },
+              {
+                key: "instagram",
+                label: "Instagram",
+                checked: postInstagram,
+                set: setPostInstagram,
+              },
+              {
+                key: "tiktok",
+                label: "TikTok",
+                checked: postTiktok,
+                set: setPostTiktok,
+              },
+              {
+                key: "youtube",
+                label: "YouTube",
+                checked: postYoutube,
+                set: setPostYoutube,
+              },
             ] as const
           ).map(({ key, label, checked, set }) => (
             <div
@@ -542,7 +675,10 @@ export default function VideoEngine({
               <span className="text-sm text-neutral-300">{label}</span>
               <Toggle
                 checked={checked}
-                onChange={() => set((v) => !v)}
+                onChange={() => {
+                  set((v) => !v);
+                  setSaved(false);
+                }}
                 disabled={!blotatoConnected}
               />
             </div>
@@ -556,11 +692,89 @@ export default function VideoEngine({
           </p>
         )}
 
+        {/* Divider */}
+        <div className="border-t border-neutral-800" />
+
+        {/* Automatic Posting Schedule */}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-0.5">
+            <h3 className="text-sm font-semibold text-white">
+              Automatic Posting Schedule
+            </h3>
+            <p className="text-xs text-neutral-500">
+              Configure how often and when reels are posted automatically.
+            </p>
+          </div>
+
+          {/* Posts per day */}
+          <div className="flex items-center justify-between py-3 px-4 rounded-lg border border-neutral-800 bg-neutral-900">
+            <span className="text-sm text-neutral-300">Posts Per Day</span>
+            <select
+              value={postsPerDay}
+              onChange={(e) => handlePostsPerDayChange(Number(e.target.value))}
+              className="text-sm text-white bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1 cursor-pointer outline-none focus:ring-1 focus:ring-neutral-600"
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n} per day
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Posting times */}
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-neutral-500 px-1">Posting Times</p>
+            {postingTimes.map((time, idx) => (
+              <div
+                key={idx}
+                className="flex items-center justify-between py-3 px-4 rounded-lg border border-neutral-800 bg-neutral-900"
+              >
+                <span className="text-sm text-neutral-300">
+                  Post {idx + 1}
+                </span>
+                <input
+                  type="time"
+                  value={time}
+                  onChange={(e) => {
+                    const updated = [...postingTimes];
+                    updated[idx] = e.target.value;
+                    setPostingTimes(updated);
+                    setSaved(false);
+                  }}
+                  className="text-sm text-white bg-neutral-800 border border-neutral-700 rounded-md px-2 py-1 outline-none focus:ring-1 focus:ring-neutral-600 [color-scheme:dark] cursor-pointer"
+                />
+              </div>
+            ))}
+          </div>
+
+          {/* Timezone note */}
+          <p className="text-xs text-neutral-600 px-1">
+            All automatic posting times use Pacific Time
+            (America/Los_Angeles).
+          </p>
+
+          {/* Save button */}
+          <button
+            type="button"
+            onClick={handleSaveSchedule}
+            disabled={saving}
+            className="w-full py-2.5 px-6 rounded-lg border border-neutral-700 bg-neutral-900 text-sm font-medium text-white hover:bg-neutral-800 hover:border-neutral-600 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? "Saving..." : saved ? "Schedule saved ✓" : "Save Posting Schedule"}
+          </button>
+
+          {saveError && (
+            <p className="text-xs text-red-400 px-1">{saveError}</p>
+          )}
+        </div>
+
+        {/* Auto Post active banner */}
         {autoPost && blotatoConnected && (
           <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-4 py-3">
             <p className="text-xs text-amber-400/80 leading-relaxed">
-              Auto Post is ON. The final reel will be posted to selected
-              platforms when ready.
+              Auto Post is ON — final reels can be sent to selected social
+              platforms. Posting integration coming in the next step.
             </p>
           </div>
         )}
@@ -580,15 +794,41 @@ export default function VideoEngine({
         </button>
 
         {showAdvanced && (
-          <div className="px-8 pb-6 flex flex-col gap-3 border-t border-neutral-800">
-            <p className="text-xs text-neutral-500 pt-4">Prompt summary</p>
-            <p className="text-xs text-neutral-400 leading-relaxed">
-              {promptSummary}
-            </p>
-            <p className="text-xs text-neutral-600">
-              Full prompt is stored server-side only in{" "}
-              <span className="font-mono">src/lib/cross-prompt.ts</span>.
-            </p>
+          <div className="px-8 pb-8 flex flex-col gap-5 border-t border-neutral-800">
+            {/* Prompt summary */}
+            <div className="flex flex-col gap-1.5 pt-5">
+              <p className="text-xs font-medium text-neutral-400">
+                Prompt Summary
+              </p>
+              <p className="text-xs text-neutral-500 leading-relaxed">
+                {promptSummary}
+              </p>
+            </div>
+
+            {/* Full prompt */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-neutral-400">
+                  Full Generation Prompt
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCopyPrompt}
+                  className="text-xs px-3 py-1.5 rounded-md border border-neutral-700 bg-neutral-900 text-neutral-300 hover:bg-neutral-800 hover:text-white hover:border-neutral-600 transition-colors duration-150"
+                >
+                  {promptCopied ? "Copied ✓" : "Copy Full Prompt"}
+                </button>
+              </div>
+              <div className="max-h-72 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900/60 p-4 scroll-smooth">
+                <pre className="text-xs text-neutral-400 whitespace-pre-wrap font-mono leading-relaxed">
+                  {fullPrompt}
+                </pre>
+              </div>
+              <p className="text-xs text-neutral-700">
+                Source:{" "}
+                <span className="font-mono">src/lib/cross-prompt.ts</span>
+              </p>
+            </div>
           </div>
         )}
       </div>

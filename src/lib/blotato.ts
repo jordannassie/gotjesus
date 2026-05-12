@@ -82,12 +82,33 @@ function authHeaders(): HeadersInit {
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
+//
+// POSTING PATHS — two distinct flows share this API client:
+//
+//   MANUAL POST (Step 6):
+//     User clicks "Post Now" after a final reel is ready.
+//     Flow: uploadMedia(finalVideoUrl) → publishToAll(mediaId, platforms, caption)
+//     No scheduledTime — post immediately.
+//
+//   SCHEDULED AUTOMATIC POST (Step 7):
+//     Triggered by a cron job or Netlify scheduled function.
+//     Reads posting_times from gotjesus_posting_settings (Pacific Time).
+//     Converts each HH:MM time to a UTC ISO timestamp via Intl.DateTimeFormat.
+//     Flow: uploadMedia(finalVideoUrl) → publishToAll(mediaId, platforms, caption, scheduledTime)
+//     Blotato's scheduledTime field accepts an ISO 8601 UTC datetime string.
+//
+//   PLATFORM HANDLING:
+//     publishToAll() already filters platforms by what is enabled in env vars.
+//     When the full pipeline is live, also filter by the user's platform toggles
+//     from posting settings (instagramEnabled, tiktokEnabled, youtubeEnabled).
 
 /**
  * Upload a video by URL to Blotato's media library.
  * Returns the Blotato mediaId to use when publishing posts.
  *
- * TODO (Step 4): Implement once Blotato upload endpoint is confirmed.
+ * TODO (Step 6): Confirm exact Blotato upload endpoint path and request shape.
+ *   Manual post path: call this immediately after final reel is ready.
+ *   Scheduled post path: call this from the scheduled automation function.
  */
 export async function uploadMedia(videoUrl: string): Promise<string> {
   const response = await fetch(`${BLOTATO_BASE_URL}/api/media/upload`, {
@@ -108,7 +129,10 @@ export async function uploadMedia(videoUrl: string): Promise<string> {
 /**
  * Publish a video to a single platform via Blotato.
  *
- * TODO (Step 4): Implement once Blotato publish endpoint is confirmed.
+ * TODO (Step 6): Confirm Blotato publish endpoint path and full request shape.
+ *   Add optional `scheduledTime?: string` (ISO 8601 UTC) to BlotatoPublishRequest
+ *   when wiring up the scheduled automatic posting flow (Step 7).
+ *   For the manual post path, omit scheduledTime — post immediately.
  */
 export async function publishPost(req: BlotatoPublishRequest): Promise<void> {
   const response = await fetch(`${BLOTATO_BASE_URL}/api/posts/publish`, {
@@ -134,7 +158,14 @@ export async function publishPost(req: BlotatoPublishRequest): Promise<void> {
  * Publish a completed video to all requested platforms in parallel.
  * Skips any platform whose accountId is missing in the env.
  *
- * TODO (Step 4): Call this from the generate-video route after end card assembly.
+ * TODO (Step 6): Wire into the finalization pipeline after end card assembly.
+ *   Also cross-check against the user's platform toggles from posting settings
+ *   (instagramEnabled, tiktokEnabled, youtubeEnabled) before posting.
+ *
+ * TODO (Step 7): Add optional `scheduledTime?: string` parameter.
+ *   Convert posting_times (HH:MM Pacific) to ISO 8601 UTC and pass to publishPost().
+ *   Use: new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', ... })
+ *   to handle Pacific daylight-saving time correctly.
  */
 export async function publishToAll(
   mediaId: string,
