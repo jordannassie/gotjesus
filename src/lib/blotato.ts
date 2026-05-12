@@ -7,8 +7,11 @@
  *   BLOTATO_YOUTUBE_ACCOUNT_ID
  *   BLOTATO_TIKTOK_ACCOUNT_ID
  *
- * TODO (Step 4): Wire uploadMedia and publishPost into the post-generation pipeline.
+ * Every post uses GOT_JESUS_DEFAULT_SOCIAL_CAPTION from src/lib/social-caption.ts.
+ * Do not pass a different caption unless that constant has been explicitly changed.
  */
+
+import { GOT_JESUS_DEFAULT_SOCIAL_CAPTION } from "@/lib/social-caption";
 
 const BLOTATO_BASE_URL = "https://backend.blotato.com";
 
@@ -107,8 +110,9 @@ function authHeaders(): HeadersInit {
  * Returns the Blotato mediaId to use when publishing posts.
  *
  * TODO (Step 6): Confirm exact Blotato upload endpoint path and request shape.
- *   Manual post path: call this immediately after final reel is ready.
- *   Scheduled post path: call this from the scheduled automation function.
+ *   Manual post path: call this immediately after final reel is ready, then
+ *   call publishToAll(mediaId, platforms) — caption defaults to GOT_JESUS_DEFAULT_SOCIAL_CAPTION.
+ *   Scheduled post path: same flow from the scheduled automation function.
  */
 export async function uploadMedia(videoUrl: string): Promise<string> {
   const response = await fetch(`${BLOTATO_BASE_URL}/api/media/upload`, {
@@ -158,9 +162,13 @@ export async function publishPost(req: BlotatoPublishRequest): Promise<void> {
  * Publish a completed video to all requested platforms in parallel.
  * Skips any platform whose accountId is missing in the env.
  *
+ * Caption always defaults to GOT_JESUS_DEFAULT_SOCIAL_CAPTION.
+ * Pass a different value only if the default is explicitly overridden.
+ *
  * TODO (Step 6): Wire into the finalization pipeline after end card assembly.
  *   Also cross-check against the user's platform toggles from posting settings
  *   (instagramEnabled, tiktokEnabled, youtubeEnabled) before posting.
+ *   Call: publishToAll(mediaId, enabledPlatforms)  — caption defaults automatically.
  *
  * TODO (Step 7): Add optional `scheduledTime?: string` parameter.
  *   Convert posting_times (HH:MM Pacific) to ISO 8601 UTC and pass to publishPost().
@@ -170,7 +178,7 @@ export async function publishPost(req: BlotatoPublishRequest): Promise<void> {
 export async function publishToAll(
   mediaId: string,
   platforms: BlotatoPlatform[],
-  caption: string
+  caption: string = GOT_JESUS_DEFAULT_SOCIAL_CAPTION
 ): Promise<void> {
   const accountIds = getBlotatoAccountIds();
 
