@@ -3,6 +3,7 @@ import { createVideoTask, getTask, extractVideoUrl } from "@/lib/kie";
 import {
   CROSS_DISCOVERY_PROMPT,
   CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX,
+  PROMPT_VERSION,
 } from "@/lib/cross-prompt";
 
 // POST /api/generate-video
@@ -17,6 +18,7 @@ export async function POST() {
       CROSS_DISCOVERY_PROMPT + CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX;
 
     const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+    console.log(`[prompt] version=${PROMPT_VERSION} source=manual`);
     console.log("[generate-video] Submitting 8-sec Seedance job");
     if (endCardUrl) {
       console.log("[generate-video] reference_image_urls:", endCardUrl);

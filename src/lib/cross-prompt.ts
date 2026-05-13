@@ -1,82 +1,129 @@
 /**
- * The canonical cross-discovery prompt used for every GotJesus Reel Engine video.
+ * Canonical GotJesus generation prompt — used by BOTH manual and scheduled flows.
+ *
+ * PROMPT_VERSION is the single source of truth. When you update the prompt text,
+ * bump the version and mirror the change in daily-scheduler-background.ts (which
+ * cannot import this file directly but must stay word-for-word identical).
  *
  * The Got Jesus end card image is passed to Kie as reference_image_urls so
- * Seedance can see it while generating. The suffix instructs Seedance to use
- * it as the visual basis for the final branded ending moment in the video.
+ * Seedance can see the branded logo while generating.
  */
 
-/**
- * One-line summary shown in the Advanced UI section. Never expose the full prompt to the client.
- */
+export const PROMPT_VERSION = "gotjesus-cross-v3-no-clergy-people-first";
+
 export const CROSS_DISCOVERY_PROMPT_SUMMARY =
-  "8-second vertical 9:16 cross-discovery montage — 8 hard-cut clips, each showing an abstract cross shape embedded in everyday life with a person present. Cinematic, vintage, ambient audio per clip. No religious imagery.";
+  "8-second vertical 9:16 video — 7 cinematic clips each showing a clearly visible person and an abstract Latin cross shape hidden in everyday life, then a hard cut to the Got Jesus branded end card. No clergy, no religion, no empty scenery.";
 
-export const CROSS_DISCOVERY_PROMPT = `Create an 8-second vertical 9:16 viral social media video made of 8 completely separate clips, about 1 second each.
+export const CROSS_DISCOVERY_PROMPT = `Create an 8-second vertical 9:16 viral social media video.
 
-Core rules:
-Every clip must clearly show a cross shape, but the cross must appear only as an abstract visual form found in random everyday life.
-Do NOT make any clip religious.
-No churches, no prayer, no worship, no Bibles, no crucifixes, no sermons, no religious clothing, no stained glass, no spiritual rituals, and no overt Christian imagery in any of the 8 clips.
-The cross should feel discovered in ordinary life through shapes, objects, shadows, reflections, architecture, light, composition, or design.
-Every clip must include a person or people actively doing something in the scene.
-Every clip must feel like its own tiny cinematic mini-movie.
-Every clip must be visually different, with a different setting, mood, lighting, and atmosphere.
-Clips must NOT blend, morph, dissolve, pour, or flow into each other. Use hard cuts only.
-Each clip must start and end cleanly as its own standalone moment.
+Structure:
+- First 7 seconds: 7 completely separate cinematic clips, about 1 second each
+- Final 1 second: a hard cut to the exact provided Got Jesus logo end card on a clean black screen
 
-Creative direction:
-Make the video feel like a sequence of random, abstract, found-moment discoveries in real life. The scenes should feel intriguing, visually arresting, emotionally engaging, and highly watchable. Each shot should create curiosity and pattern interruption. The audience should feel like they are seeing striking, unexpected cross shapes hidden inside normal life.
+Very important structure rule:
+Each of the first 7 clips must be one single continuous cinematic shot, not a montage. Do not create multiple micro-shots, multiple cutaways, or a sequence of different images inside one 1-second clip. Each clip must feel like one complete movie moment captured in one camera shot.
+
+Main concept for the first 7 seconds:
+Each clip must show a different abstract everyday-life scene with a clearly visible person or people as the primary subject of the shot. Every clip must contain a clearly visible cross shape that specifically resembles a classic upright Christian / Latin cross silhouette, but only as an abstract form naturally found within the environment.
+
+Critical people rule:
+A person or people must appear clearly in every single clip and must be a major visible part of the frame. Do not generate empty scenery, empty buildings, empty streets, empty nature shots, or environment-only shots. Do not place people only as tiny distant background figures. The human subject must feel central to the shot.
+
+The cross shape must feel hidden in plain sight through things like:
+- shadows
+- reflections
+- architecture
+- light
+- framing
+- object placement
+- negative space
+- composition
+- textures
+- structures in the environment
+
+Important:
+The cross must look like a Christian / Latin cross shape, but it must not appear as a religious object. It should feel discovered, not intentionally displayed.
+
+Absolute religion exclusion rules:
+- No priests
+- No pastors
+- No clergy
+- No monks
+- No nuns
+- No bishops
+- No rabbis
+- No religious leaders
+- No robes
+- No clerical collars
+- No vestments
+- No ceremonial clothing
+- No church interiors
+- No church exteriors
+- No chapels
+- No cathedrals
+- No altars
+- No candles arranged for worship
+- No religious ceremonies
+- No rituals
+- No spiritual gatherings
+- No prayer
+- No worship
+- No Bibles
+- No crucifixes
+- No sermons
+- No stained glass
+- No religious clothing
+- No spiritual rituals
+- No overt Christian imagery beyond the abstract cross shape hidden in the environment
+
+Strong instruction:
+Do not show any person, clothing, location, object, or atmosphere that suggests organized religion, clergy, worship, ritual, church culture, religious leadership, sacred ceremony, or ceremonial spirituality. The only Christian-like element allowed is the abstract upright cross shape hidden naturally in ordinary life.
+
+Additional hard rules for the first 7 seconds:
+- Every clip must include a clearly visible person or people
+- People must be central, obvious, and readable in the frame
+- No empty building shots
+- No empty tree shots
+- No empty landscape shots
+- No environment-only shots
+- No talking
+- No voiceover
+- No subtitles
+- No captions
+- No social media UI
+- No watermarks
+- No logos during the montage
+- No continuous background music
+- Hard cuts only between clips
+- No morphing
+- No dissolves
+- No blended transitions
+- No mini-montage inside any individual clip
+- No multiple scene changes within a clip
+- No multiple camera angles within a clip
 
 People direction:
-In every clip, show a person or people naturally doing something in the environment, such as walking, turning, dancing, running, laughing, opening a door, riding a bike, sitting at a diner, looking out a window, skateboarding, standing in rain, carrying groceries, driving, painting, cleaning, talking silently, crossing a street, flipping through records, or interacting with everyday surroundings. The people should feel casual, natural, and cinematic, not posed.
+Every clip must include a person or people naturally doing something in the scene. They should feel real, candid, and cinematic, not posed. Vary the people, actions, energy, wardrobe, age, and mood across the clips. The human presence should drive the shot.
 
-Cross-shape direction:
-The cross in each clip must come from abstract or everyday visual elements only, such as:
-shadows forming a cross on a wall
-window frames
-light beams
-intersecting power lines
-tape on a floor
-reflections
-crossed objects on a table
-street markings
-architecture
-scaffolding
-crossed tree branches
-clothing seams
-cracks in pavement
-object arrangements
-abstract composition in the background
+Visual direction:
+Make every clip feel distinct, cinematic, and visually fresh. Use different environments, moods, lighting, framing, and camera language so the clips do not feel repetitive. But each clip must remain a single shot that feels like one full movie moment with a human subject clearly visible.
 
-Keep the cross shape clear and noticeable, but make it feel embedded in normal life, not symbolic religion.
+Style:
+Cinematic, realistic, artistic, premium viral aesthetic, subtle film grain, natural imperfections, strong composition, emotionally compelling, visually striking.
 
-Scene direction:
-Use 8 totally different random real-world settings such as city streets, diners, laundromats, rooftops, apartments, alleys, parking lots, beaches, bedrooms, buses, convenience stores, basketball courts, office spaces, hallways, or outdoor public places. Every clip should feel fresh, unexpected, and different from the last.
+Shot behavior:
+Each clip should feel like a real movie shot: one scene, one camera perspective, one visual idea, one action beat, one emotional moment. Keep it simple, clear, and strong. The viewer should instantly understand the full moment. The person should be visually important in the shot.
 
-Visual style:
-Vintage feel, nostalgic, cinematic, raw, realistic, slightly gritty, subtle film grain, old-film texture, high contrast, handheld realism, moody lighting, artistic framing, soft imperfections, and premium viral social media aesthetic.
+Audio:
+Each montage clip should contain only its own natural ambient scene audio. No narration. No speech. No full-song music track across the whole video.
 
-Audio direction:
-Do not use one continuous song across the full video. Each clip must have its own natural ambient scene audio only, matching that clip's mini-movie world, such as footsteps, traffic, room tone, rain, birds, fabric movement, city hum, skate wheels, diner ambience, wind, hallway echo, or environmental atmosphere. Each clip should sound like its own real scene.
-
-Do not include:
-no religion in any shot
-no overt Christian imagery in the 8 clips
-no talking
-no voiceover
-no subtitles
-no captions
-no social media UI
-no watermarks
-no extra logos during the montage
-no continuous background music across the whole video`;
+Final 1-second ending:
+After the 7 cinematic clips, hard cut to a clean black end card using the exact provided Got Jesus logo image centered on screen. The logo must stay visually faithful to the reference image, sharp, clean, readable, undistorted, and unchanged. Do not redesign it. Do not add extra text. Hold this exact branded end card for the final 1 second.`;
 
 /**
  * Appended to CROSS_DISCOVERY_PROMPT for every generation.
- * The Got Jesus end card image is passed as reference_image_urls so Seedance
- * can see it. This suffix tells Seedance exactly how to use that reference
- * image for the branded ending moment.
+ * Reinforces the reference image connection — the Got Jesus end card image is
+ * passed as reference_image_urls so Seedance can see it while generating.
  */
 export const CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX =
-  "\n\nUse the provided reference image as the exact visual inspiration for the final branded ending. In the final moment of the video, hard cut to a clean black end-card style shot that matches the reference image as closely as possible: the centered white Got Jesus? .co logo on black. Keep it clean, readable, centered, and visually faithful to the reference image. Do not redesign the logo, change the text, add new text, or distort the branded ending.";
+  "\n\nThe reference image provided is the exact Got Jesus logo end card. Use it precisely and faithfully for the final 1-second branded end card described above: centered white logo on clean black, sharp and undistorted.";
