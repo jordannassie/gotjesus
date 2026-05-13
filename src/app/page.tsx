@@ -10,19 +10,42 @@ export default async function Home() {
   const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
   const initialSettings = await getPostingSettings();
 
+  const heroImage =
+    "https://phhczohqidgrvcmszets.supabase.co/storage/v1/object/public/GOT%20JESUS/image/89D706C1-5DDB-423C-A225-63645A926841.jpg";
+
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen px-6 py-16">
-      <div className="w-full max-w-xl flex flex-col items-center gap-10">
-        {/* Header */}
-        <div className="text-center flex flex-col gap-4">
-          <h1 className="text-4xl font-bold tracking-tight leading-tight">
+    <main className="flex flex-col items-center justify-center min-h-screen">
+      {/* ── Hero ──────────────────────────────────────────────────────────── */}
+      <div className="relative w-full overflow-hidden" style={{ maxHeight: "75vh", minHeight: "420px" }}>
+        {/* Background image */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={heroImage}
+          alt="GotJesus hero"
+          className="w-full h-full object-cover object-top"
+          style={{ maxHeight: "75vh", minHeight: "420px", display: "block" }}
+        />
+        {/* Gradient overlay — fades from transparent to bg at bottom */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 60%, rgba(10,10,10,0.97) 100%)",
+          }}
+        />
+        {/* Title text over image */}
+        <div className="absolute bottom-0 left-0 right-0 px-6 pb-10 text-center flex flex-col gap-3">
+          <h1 className="text-4xl font-bold tracking-tight leading-tight text-white drop-shadow-lg">
             GotJesus Reel Engine
           </h1>
-          <p className="text-sm text-neutral-400 leading-relaxed max-w-sm mx-auto">
+          <p className="text-sm text-neutral-300 leading-relaxed max-w-sm mx-auto drop-shadow">
             Generate viral 9:16 Got Jesus? reels, add the official logo end
             card, and schedule them for social posting.
           </p>
         </div>
+      </div>
+
+      <div className="w-full max-w-xl flex flex-col items-center gap-10 px-6 py-10">
 
         {/* Interactive engine — client component, server-provided props */}
         <VideoEngine
