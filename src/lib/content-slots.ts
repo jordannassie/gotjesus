@@ -255,6 +255,80 @@ export async function upsertContentSlot(
 }
 
 /**
+ * Creates a new content slot for a workspace.
+ * Automatically assigns the next sort_order and generates a unique slot_key.
+ * Accepts optional overrides for all fields (useful for Duplicate Section).
+ */
+export async function createContentSlot(
+  workspaceKey = "gotjesus",
+  overrides: Partial<Omit<ContentSlot, "id" | "createdAt" | "updatedAt" | "workspaceKey">> = {}
+): Promise<ContentSlot> {
+  const supabase = requireClient();
+
+  // Find the current highest sort_order so the new slot appears at the bottom
+  const { data: top } = await supabase
+    .from("gotjesus_content_slots")
+    .select("sort_order")
+    .eq("workspace_key", workspaceKey)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const nextOrder = ((top as { sort_order: number } | null)?.sort_order ?? 0) + 1;
+  const slotKey = overrides.slotKey ?? `slot_custom_${Date.now()}`;
+
+  const row = {
+    workspace_key: workspaceKey,
+    slot_key: slotKey,
+    slot_name: overrides.slotName ?? "New Content Section",
+    prompt_text: overrides.promptText ?? "",
+    reference_images: overrides.referenceImages ?? [],
+    enabled: overrides.enabled ?? false,
+    scheduled_post_time: overrides.scheduledPostTime ?? "08:00",
+    model: overrides.model ?? "Seedance 2.0 Fast",
+    duration_seconds: overrides.durationSeconds ?? 8,
+    aspect_ratio: overrides.aspectRatio ?? "9:16",
+    resolution: overrides.resolution ?? (process.env.KIE_VIDEO_RESOLUTION || "480p"),
+    sort_order: nextOrder,
+  };
+
+  const { data, error } = await supabase
+    .from("gotjesus_content_slots")
+    .insert(row)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Failed to create content slot: ${error?.message ?? "no data returned"}`
+    );
+  }
+
+  console.log("[content-slots] Created new slot:", slotKey);
+  return rowToSlot(data as DbRow);
+}
+
+/**
+ * Permanently deletes a content slot by id.
+ * Does NOT delete any generated reels or Supabase video files — only the slot config.
+ * Throws on failure.
+ */
+export async function deleteContentSlot(id: string): Promise<void> {
+  const supabase = requireClient();
+
+  const { error } = await supabase
+    .from("gotjesus_content_slots")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to delete content slot: ${error.message}`);
+  }
+
+  console.log("[content-slots] Deleted slot:", id);
+}
+
+/**
  * Replaces the reference_images array for a slot.
  * Throws on failure.
  */

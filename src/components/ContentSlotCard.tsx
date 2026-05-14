@@ -9,6 +9,9 @@ type GenStatus = "idle" | "submitting" | "generating" | "saving" | "done" | "err
 interface Props {
   slot: ContentSlot;
   onSlotUpdate: (updated: ContentSlot) => void;
+  onDelete: (id: string) => void;
+  onDuplicate: (slot: ContentSlot) => void;
+  isLastSlot?: boolean;
 }
 
 const POLL_INTERVAL_MS = 6000;
@@ -22,7 +25,14 @@ const RESOLUTION_OPTIONS = ["480p", "720p", "1080p"];
 // dimensions fall outside Kie.ai's accepted range [0.4–2.5] before the request
 // is sent. This lets users upload brand assets at any size without errors.
 
-export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
+export default function ContentSlotCard({
+  slot,
+  onSlotUpdate,
+  onDelete,
+  onDuplicate,
+  isLastSlot = false,
+}: Props) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [slotName, setSlotName] = useState(slot.slotName);
   const [promptText, setPromptText] = useState(slot.promptText);
   const [enabled, setEnabled] = useState(slot.enabled);
@@ -241,34 +251,88 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
   return (
     <div className="w-full border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-3.5 border-b border-neutral-800 bg-neutral-900/40">
-        <input
-          type="text"
-          value={slotName}
-          onChange={(e) => setSlotName(e.target.value)}
-          className="flex-1 bg-transparent text-white font-semibold text-sm outline-none border-b border-transparent hover:border-neutral-700 focus:border-neutral-500 transition-colors pb-0.5 min-w-0"
-          placeholder="Slot name"
-        />
-        <div className="flex items-center gap-2.5 shrink-0">
+      <div className="flex flex-col gap-2 px-5 py-3.5 border-b border-neutral-800 bg-neutral-900/40">
+        <div className="flex items-center gap-3">
           <input
-            type="time"
-            value={scheduledTime}
-            onChange={(e) => setScheduledTime(e.target.value)}
-            className="text-xs text-white bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 outline-none [color-scheme:dark] cursor-pointer"
+            type="text"
+            value={slotName}
+            onChange={(e) => setSlotName(e.target.value)}
+            className="flex-1 bg-transparent text-white font-semibold text-sm outline-none border-b border-transparent hover:border-neutral-700 focus:border-neutral-500 transition-colors pb-0.5 min-w-0"
+            placeholder="Section name"
           />
-          <button
-            type="button"
-            role="switch"
-            aria-checked={enabled}
-            onClick={() => setEnabled((v) => !v)}
-            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer ${enabled ? "bg-emerald-500" : "bg-neutral-700"}`}
-          >
-            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${enabled ? "translate-x-4" : "translate-x-1"}`} />
-          </button>
-          <span className={`text-xs font-medium w-14 ${enabled ? "text-emerald-400" : "text-neutral-600"}`}>
-            {enabled ? "Enabled" : "Disabled"}
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="time"
+              value={scheduledTime}
+              onChange={(e) => setScheduledTime(e.target.value)}
+              className="text-xs text-white bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 outline-none [color-scheme:dark] cursor-pointer"
+            />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              onClick={() => setEnabled((v) => !v)}
+              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer ${enabled ? "bg-emerald-500" : "bg-neutral-700"}`}
+            >
+              <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${enabled ? "translate-x-4" : "translate-x-1"}`} />
+            </button>
+            <span className={`text-xs font-medium w-14 ${enabled ? "text-emerald-400" : "text-neutral-600"}`}>
+              {enabled ? "Enabled" : "Disabled"}
+            </span>
+
+            {/* Duplicate */}
+            <button
+              type="button"
+              onClick={() => onDuplicate(slot)}
+              title="Duplicate section"
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-neutral-300 hover:border-neutral-700 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+              </svg>
+            </button>
+
+            {/* Delete */}
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              title="Delete section"
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
         </div>
+
+        {/* Delete confirmation inline */}
+        {showDeleteConfirm && (
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-red-900 bg-red-950/30">
+            <p className="text-xs text-red-300 flex-1 leading-relaxed">
+              {isLastSlot
+                ? "This is the last content section. Deleting it means scheduled automation will have no slots to run."
+                : "Delete this content section? The prompt and settings will be removed. Previously generated videos are not affected."}
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => { onDelete(slot.id); setShowDeleteConfirm(false); }}
+                className="text-[11px] px-3 py-1.5 rounded-lg bg-red-900 text-red-200 hover:bg-red-800 transition-colors font-medium"
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                className="text-[11px] px-3 py-1.5 rounded-lg border border-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="px-5 py-4 flex flex-col gap-4">
