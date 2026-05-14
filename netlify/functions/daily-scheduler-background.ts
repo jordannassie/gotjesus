@@ -212,6 +212,34 @@ async function getPostingSettings(supabase: SupabaseClient) {
   } | null;
 }
 
+interface ContentSlotRow {
+  id: string;
+  slot_key: string;
+  slot_name: string;
+  prompt_text: string;
+  reference_images: Array<{ url: string; path: string; name: string }>;
+  enabled: boolean;
+  scheduled_post_time: string;
+  resolution: string;
+  duration_seconds: number;
+  sort_order: number;
+}
+
+async function getEnabledContentSlots(supabase: SupabaseClient): Promise<ContentSlotRow[]> {
+  const { data, error } = await supabase
+    .from("gotjesus_content_slots")
+    .select("id, slot_key, slot_name, prompt_text, reference_images, enabled, scheduled_post_time, resolution, duration_seconds, sort_order")
+    .eq("workspace_key", "gotjesus")
+    .eq("enabled", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    console.warn("[scheduler] getEnabledContentSlots error:", error.message);
+    return [];
+  }
+  return (data ?? []) as ContentSlotRow[];
+}
+
 async function scheduledReelExists(
   supabase: SupabaseClient,
   scheduledForISO: string
@@ -257,8 +285,15 @@ async function updateReelRow(
 
 // ─── Kie.ai helpers (inlined) ─────────────────────────────────────────────────
 
-async function submitKieJob(prompt: string): Promise<string> {
+async function submitKieJob(
+  prompt: string,
+  slotImageUrls: string[] = [],
+  resolution?: string,
+  durationSeconds?: number
+): Promise<string> {
   const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+  // Slot images first, end card always last so Seedance anchors the branded ending
+  const allRefs = [...slotImageUrls, ...(endCardUrl ? [endCardUrl] : [])];
   const res = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
     method: "POST",
     headers: {
@@ -270,10 +305,10 @@ async function submitKieJob(prompt: string): Promise<string> {
       input: {
         prompt,
         aspect_ratio: "9:16",
-        resolution: process.env.KIE_VIDEO_RESOLUTION || "480p",
-        duration: 8,
+        resolution: resolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p",
+        duration: durationSeconds ?? 8,
         generate_audio: true,
-        ...(endCardUrl ? { reference_image_urls: [endCardUrl] } : {}),
+        ...(allRefs.length > 0 ? { reference_image_urls: allRefs } : {}),
       },
     }),
   });
@@ -463,32 +498,73 @@ const handler: Handler = async () => {
     return { statusCode: 200, body: "no platforms" };
   }
 
-  // Determine which posting times to process today
-  const slots = (settings.posting_times ?? []).slice(0, settings.posts_per_day ?? 1);
-  console.log(`[scheduler] Processing ${slots.length} slot(s): ${slots.join(", ")} (Pacific)`);
+  // Load content slots from DB (slot-based scheduling)
+  const contentSlots = await getEnabledContentSlots(supabase);
+  console.log(`[scheduler] Found ${contentSlots.length} enabled content slot(s)`);
 
-  for (const timeHHMM of slots) {
+  // Fallback: if no content slots exist yet, use posting_times from settings
+  // with the canonical CROSS_DISCOVERY_PROMPT (backward compatibility)
+  const slotsToProcess: Array<{
+    timeHHMM: string;
+    promptText: string;
+    imageUrls: string[];
+    resolution: string;
+    durationSeconds: number;
+    slotKey: string;
+  }> = contentSlots.length > 0
+    ? contentSlots.map((s) => ({
+        timeHHMM: s.scheduled_post_time,
+        promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
+        imageUrls: (s.reference_images ?? []).map((img) => img.url),
+        resolution: s.resolution || "480p",
+        durationSeconds: s.duration_seconds || 8,
+        slotKey: s.slot_key,
+      }))
+    : (settings.posting_times ?? [])
+        .slice(0, settings.posts_per_day ?? 1)
+        .map((t, i) => ({
+          timeHHMM: t,
+          promptText: CROSS_DISCOVERY_PROMPT,
+          imageUrls: [],
+          resolution: process.env.KIE_VIDEO_RESOLUTION ?? "480p",
+          durationSeconds: 8,
+          slotKey: `fallback_${i + 1}`,
+        }));
+
+  console.log(
+    `[scheduler] Processing ${slotsToProcess.length} slot(s): ${slotsToProcess.map((s) => `${s.slotKey}@${s.timeHHMM}`).join(", ")}`
+  );
+
+  const NATIVE_ENDING_SUFFIX =
+    "\n\nThe reference image provided is the exact Got Jesus logo end card. Use it precisely and faithfully for the final 1-second branded end card described above: centered white logo on clean black, sharp and undistorted.";
+
+  for (const slotInfo of slotsToProcess) {
+    const { timeHHMM, promptText, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
     const scheduledForISO = pacificTimeToUTCISO(timeHHMM);
-    console.log(`[scheduler] Slot ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
+    console.log(`[scheduler] Slot ${slotKey} ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
 
     // Duplicate check
     const exists = await scheduledReelExists(supabase, scheduledForISO);
     if (exists) {
-      console.log(`[scheduler] Reel already exists for slot ${timeHHMM}. Skipping.`);
+      console.log(`[scheduler] Reel already exists for slot ${slotKey} ${timeHHMM}. Skipping.`);
       continue;
     }
 
     // Create DB row
     const reelId = crypto.randomUUID();
     await createReelRow(supabase, reelId, scheduledForISO, enabledPlatforms);
-    console.log(`[scheduler] Created reel ${reelId} for slot ${timeHHMM}`);
+    console.log(`[scheduler] Created reel ${reelId} for slot ${slotKey}`);
 
     try {
-      // Generate Kie reel
-      console.log(`[prompt] version=${PROMPT_VERSION} source=scheduled`);
+      // Generate Kie reel using slot's prompt + images
+      console.log(`[prompt] version=${PROMPT_VERSION} source=scheduled slot=${slotKey}`);
       console.log(`[scheduler] Submitting Kie job for reel ${reelId}`);
-      const taskId = await submitKieJob(CROSS_DISCOVERY_PROMPT);
-      await updateReelRow(supabase, reelId, { kie_task_id: taskId });
+      const fullPrompt = promptText + NATIVE_ENDING_SUFFIX;
+      const taskId = await submitKieJob(fullPrompt, imageUrls, resolution, durationSeconds);
+      await updateReelRow(supabase, reelId, {
+        kie_task_id: taskId,
+        prompt_used: `[${slotKey}] ${promptText.slice(0, 200)}`,
+      });
 
       // Poll until done
       const kieVideoUrl = await pollKieVideo(taskId);

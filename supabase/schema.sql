@@ -152,3 +152,46 @@ create policy "service role update brand settings"
 
 create policy "service role delete brand settings"
   on gotjesus_brand_settings for delete using (true);
+
+-- ─── Daily Content Engine — content slots ──────────────────────────────────────
+-- One row per scheduled content slot. Each workspace has up to N slots (default 3).
+-- Each slot owns its own prompt, reference images, scheduled time, and generation
+-- settings. Designed as the future multi-workspace content scheduling layer.
+--
+-- Currently used for workspace_key = 'gotjesus' with 3 slots:
+--   slot_1 = Morning Reel  (07:00 PT)
+--   slot_2 = Midday Reel   (11:00 PT)
+--   slot_3 = Evening Reel  (18:30 PT)
+
+create table if not exists gotjesus_content_slots (
+  id                  uuid        primary key default gen_random_uuid(),
+  created_at          timestamptz not null    default now(),
+  updated_at          timestamptz not null    default now(),
+  workspace_key       text        not null    default 'gotjesus',
+  slot_key            text        not null,
+  slot_name           text        not null,
+  prompt_text         text        not null    default '',
+  reference_images    jsonb       not null    default '[]'::jsonb,
+  enabled             boolean     not null    default true,
+  scheduled_post_time text        not null    default '07:00',
+  model               text        not null    default 'Seedance 2.0 Fast',
+  duration_seconds    integer     not null    default 8,
+  aspect_ratio        text        not null    default '9:16',
+  resolution          text        not null    default '480p',
+  sort_order          integer     not null    default 1,
+  unique (workspace_key, slot_key)
+);
+
+alter table gotjesus_content_slots enable row level security;
+
+create policy "service role select content slots"
+  on gotjesus_content_slots for select using (true);
+
+create policy "service role insert content slots"
+  on gotjesus_content_slots for insert with check (true);
+
+create policy "service role update content slots"
+  on gotjesus_content_slots for update using (true);
+
+create policy "service role delete content slots"
+  on gotjesus_content_slots for delete using (true);

@@ -1,10 +1,12 @@
 import Image from "next/image";
 import VideoEngine from "@/components/VideoEngine";
 import BannerImageEditor from "@/components/BannerImageEditor";
+import DailyContentEngine from "@/components/DailyContentEngine";
 import { isBlotatoConnected } from "@/lib/blotato";
 import { CROSS_DISCOVERY_PROMPT, CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
 import { getPostingSettings } from "@/lib/posting-settings";
 import { getBrandSettings } from "@/lib/brand-settings";
+import { getContentSlots, seedDefaultContentSlotsIfMissing } from "@/lib/content-slots";
 
 // Force server-side rendering on every request so getBrandSettings() and
 // getPostingSettings() always return fresh data from Supabase, and
@@ -18,6 +20,9 @@ export default async function Home() {
   const initialSettings = await getPostingSettings();
   const brandSettings = await getBrandSettings("gotjesus");
   const heroImage = brandSettings.bannerImageUrl;
+  // Seed content slots if this is the first load, then fetch them
+  await seedDefaultContentSlotsIfMissing("gotjesus");
+  const contentSlots = await getContentSlots("gotjesus");
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white flex flex-col">
@@ -129,6 +134,11 @@ export default async function Home() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* ── Daily Content Engine ─────────────────────────────────────────── */}
+        <div className="w-full max-w-6xl mx-auto px-6 pt-5">
+          <DailyContentEngine initialSlots={contentSlots} />
         </div>
 
         {/* ── Video Engine ─────────────────────────────────────────────────── */}
