@@ -35,6 +35,7 @@ export default function ContentSlotCard({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [slotName, setSlotName] = useState(slot.slotName);
   const [promptText, setPromptText] = useState(slot.promptText);
+  const [postCaption, setPostCaption] = useState(slot.postCaption ?? "");
   const [enabled, setEnabled] = useState(slot.enabled);
   const [scheduledTime, setScheduledTime] = useState(slot.scheduledPostTime);
   const [duration, setDuration] = useState(slot.durationSeconds);
@@ -111,10 +112,11 @@ export default function ContentSlotCard({
           id: slot.id,
           slotName,
           promptText,
+          postCaption,
           enabled,
           scheduledPostTime: scheduledTime,
           durationSeconds: duration,
-          aspectRatio: "9:16", // locked — output is always 9:16 vertical
+          aspectRatio: "9:16",
           resolution,
         }),
       });
@@ -127,7 +129,7 @@ export default function ContentSlotCard({
       setSaveError(err instanceof Error ? err.message : "Save failed.");
       setSaveStatus("error");
     }
-  }, [slot.id, slotName, promptText, enabled, scheduledTime, duration, resolution, onSlotUpdate]);
+  }, [slot.id, slotName, promptText, postCaption, enabled, scheduledTime, duration, resolution, onSlotUpdate]);
 
   // ── Image upload ──────────────────────────────────────────────────────────
 
@@ -228,6 +230,7 @@ export default function ContentSlotCard({
                 platforms: [],
                 contentSlotKey: slot.slotKey,
                 contentSlotName: slotName,
+                postCaption: postCaption || undefined,
               }),
             });
           } catch { /* non-fatal */ }
@@ -240,7 +243,7 @@ export default function ContentSlotCard({
     } catch (err) {
       setGenStatus("error"); setGenError(err instanceof Error ? err.message : "Submit error.");
     }
-  }, [promptText, images, slot.slotKey, slotName, resolution, duration, pollGen, stopGenPoll]);
+  }, [promptText, postCaption, images, slot.slotKey, slotName, resolution, duration, pollGen, stopGenPoll]);
 
   const genRunning = ["submitting", "generating", "saving"].includes(genStatus);
   const genLabel =
@@ -375,6 +378,20 @@ export default function ContentSlotCard({
           style={{ height: "130px" }}
         />
 
+        {/* Post Caption */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">
+            Post Caption
+          </label>
+          <textarea
+            value={postCaption}
+            onChange={(e) => setPostCaption(e.target.value)}
+            placeholder="Jesus Loves You! #jesus #gotjesus gotjesus.co"
+            rows={2}
+            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-neutral-300 placeholder-neutral-700 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors leading-relaxed"
+          />
+        </div>
+
         {/* Editable settings row */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Model — read-only */}
@@ -431,9 +448,9 @@ export default function ContentSlotCard({
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-neutral-500 font-medium tracking-wide uppercase">
-                {genStatus === "submitting" && "Submitting job…"}
-                {genStatus === "generating" && "Generating video…"}
-                {genStatus === "saving" && "Saving to library…"}
+                {genStatus === "submitting" && (genProgress < 5 ? "Starting generation…" : "Sending prompt and images…")}
+                {genStatus === "generating" && (genProgress < 80 ? "Generating video…" : "Finalizing GotJesus end card…")}
+                {genStatus === "saving" && "Saving to Library…"}
                 {genStatus === "done" && "Complete"}
               </span>
               <span className={`text-[10px] font-semibold tabular-nums ${
@@ -481,7 +498,7 @@ export default function ContentSlotCard({
         {genStatus === "done" && testVideoUrl && (
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-emerald-400">Test generated ✓</span>
+              <span className="text-xs font-medium text-emerald-400">Generation complete — saved to Library ✓</span>
               <button type="button" onClick={() => setShowTestVideo((v) => !v)} className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">
                 {showTestVideo ? "Hide ↑" : "Show ↓"}
               </button>

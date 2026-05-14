@@ -26,6 +26,7 @@ export interface ContentSlot {
   slotKey: string;
   slotName: string;
   promptText: string;
+  postCaption: string;
   referenceImages: SlotImage[];
   enabled: boolean;
   scheduledPostTime: string;
@@ -46,6 +47,7 @@ interface DbRow {
   slot_key: string;
   slot_name: string;
   prompt_text: string;
+  post_caption: string;
   reference_images: SlotImage[];
   enabled: boolean;
   scheduled_post_time: string;
@@ -96,6 +98,7 @@ function rowToSlot(row: DbRow): ContentSlot {
     slotKey: row.slot_key,
     slotName: row.slot_name,
     promptText: row.prompt_text,
+    postCaption: row.post_caption ?? "",
     referenceImages: Array.isArray(row.reference_images) ? row.reference_images : [],
     enabled: row.enabled,
     scheduledPostTime: row.scheduled_post_time,
@@ -230,6 +233,7 @@ export async function upsertContentSlot(
 
   if (slot.slotName !== undefined) updates.slot_name = slot.slotName;
   if (slot.promptText !== undefined) updates.prompt_text = slot.promptText;
+  if (slot.postCaption !== undefined) updates.post_caption = slot.postCaption;
   if (slot.enabled !== undefined) updates.enabled = slot.enabled;
   if (slot.scheduledPostTime !== undefined) updates.scheduled_post_time = slot.scheduledPostTime;
   if (slot.model !== undefined) updates.model = slot.model;
@@ -282,6 +286,7 @@ export async function createContentSlot(
     slot_key: slotKey,
     slot_name: overrides.slotName ?? "New Content Section",
     prompt_text: overrides.promptText ?? "",
+    post_caption: overrides.postCaption ?? "",
     reference_images: overrides.referenceImages ?? [],
     enabled: overrides.enabled ?? false,
     scheduled_post_time: overrides.scheduledPostTime ?? "08:00",

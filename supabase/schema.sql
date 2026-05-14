@@ -196,6 +196,17 @@ create policy "service role update content slots"
 create policy "service role delete content slots"
   on gotjesus_content_slots for delete using (true);
 
+-- ─── Migration: add post_caption to content slots and reels ───────────────────
+-- Run these once if the tables already exist:
+--
+-- alter table gotjesus_content_slots
+--   add column if not exists post_caption text not null default '';
+--
+-- alter table gotjesus_reels
+--   add column if not exists post_caption text;
+--   (NOTE: gotjesus_reels already has caption_used which stores the snapshot.
+--    The post_caption column on reels is optional — caption_used is the snapshot.)
+
 -- ─── Migration: add editable end card columns to gotjesus_brand_settings ──────
 -- Run these once if the table already exists:
 --

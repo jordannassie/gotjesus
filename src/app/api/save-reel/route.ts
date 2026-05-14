@@ -1,6 +1,6 @@
 /**
  * POST /api/save-reel
- * Body: { kieVideoUrl, kieTaskId?, autoPost, platforms: string[] }
+ * Body: { kieVideoUrl, kieTaskId?, autoPost, platforms: string[], postCaption? }
  *
  * Creates a gotjesus_reels row, then invokes save-reel-background to:
  *   1. Download the Kie video and save it to Supabase Storage.
@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     platforms?: string[];
     contentSlotKey?: string;
     contentSlotName?: string;
+    postCaption?: string;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     platforms = [],
     contentSlotKey,
     contentSlotName,
+    postCaption,
   } = body;
 
   if (!kieVideoUrl)
@@ -78,7 +80,7 @@ export async function POST(req: NextRequest) {
       generation_source: "manual",
       kie_task_id: kieTaskId ?? null,
       kie_video_url: kieVideoUrl,
-      caption_used: GOT_JESUS_DEFAULT_SOCIAL_CAPTION,
+      caption_used: postCaption || GOT_JESUS_DEFAULT_SOCIAL_CAPTION,
       prompt_used: CROSS_DISCOVERY_PROMPT,
       instagram_enabled: platforms.includes("instagram"),
       tiktok_enabled: platforms.includes("tiktok"),

@@ -45,7 +45,7 @@ export default function DailyContentEngine({ initialSlots }: Props) {
         body: JSON.stringify({
           slotName: `${source.slotName} — Copy`,
           promptText: source.promptText,
-          // reference images are not deep-copied to avoid duplicate storage paths
+          postCaption: source.postCaption ?? "",
           referenceImages: [],
           enabled: false,
           scheduledPostTime: source.scheduledPostTime,

@@ -223,6 +223,7 @@ interface ContentSlotRow {
   slot_key: string;
   slot_name: string;
   prompt_text: string;
+  post_caption: string;
   reference_images: Array<{ url: string; path: string; name: string }>;
   enabled: boolean;
   scheduled_post_time: string;
@@ -235,7 +236,7 @@ interface ContentSlotRow {
 async function getEnabledContentSlots(supabase: SupabaseClient): Promise<ContentSlotRow[]> {
   const { data, error } = await supabase
     .from("gotjesus_content_slots")
-    .select("id, slot_key, slot_name, prompt_text, reference_images, enabled, scheduled_post_time, resolution, duration_seconds, aspect_ratio, sort_order")
+    .select("id, slot_key, slot_name, prompt_text, post_caption, reference_images, enabled, scheduled_post_time, resolution, duration_seconds, aspect_ratio, sort_order")
     .eq("workspace_key", "gotjesus")
     .eq("enabled", true)
     .order("sort_order", { ascending: true });
@@ -268,14 +269,15 @@ async function createReelRow(
   supabase: SupabaseClient,
   id: string,
   scheduledFor: string,
-  platforms: string[]
+  platforms: string[],
+  caption: string
 ): Promise<void> {
   await supabase.from("gotjesus_reels").insert({
     id,
     status: "generating",
     generation_source: "scheduled",
     scheduled_for: scheduledFor,
-    caption_used: GOT_JESUS_CAPTION,
+    caption_used: caption,
     instagram_enabled: platforms.includes("instagram"),
     tiktok_enabled: platforms.includes("tiktok"),
     youtube_enabled: platforms.includes("youtube"),
@@ -475,7 +477,8 @@ function buildBlotatoTarget(platform: Platform): Record<string, unknown> {
 async function blotatoPublish(
   videoUrl: string,
   platform: Platform,
-  scheduledTime: string
+  scheduledTime: string,
+  caption: string
 ): Promise<string> {
   const accountId = getAccountId(platform);
   if (!accountId) throw new Error(`No Blotato account ID for ${platform}`);
@@ -484,7 +487,7 @@ async function blotatoPublish(
     post: {
       accountId,
       content: {
-        text: GOT_JESUS_CAPTION,
+        text: caption,
         mediaUrls: [videoUrl],
         platform,
       },
@@ -551,6 +554,7 @@ const handler: Handler = async () => {
   const slotsToProcess = contentSlots.map((s) => ({
     timeHHMM: s.scheduled_post_time,
     promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
+    caption: s.post_caption || GOT_JESUS_CAPTION,
     imageUrls: (s.reference_images ?? []).map((img) => img.url),
     resolution: s.resolution || "480p",
     durationSeconds: s.duration_seconds || 8,
@@ -565,7 +569,7 @@ const handler: Handler = async () => {
     "\n\nThe reference image provided is the exact Got Jesus logo end card. Use it precisely and faithfully for the final 1-second branded end card described above: centered white logo on clean black, sharp and undistorted.";
 
   for (const slotInfo of slotsToProcess) {
-    const { timeHHMM, promptText, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
+    const { timeHHMM, promptText, caption, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
     const scheduledForISO = pacificTimeToUTCISO(timeHHMM);
     console.log(`[scheduler] Slot ${slotKey} ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
 
@@ -578,7 +582,7 @@ const handler: Handler = async () => {
 
     // Create DB row
     const reelId = crypto.randomUUID();
-    await createReelRow(supabase, reelId, scheduledForISO, enabledPlatforms);
+    await createReelRow(supabase, reelId, scheduledForISO, enabledPlatforms, caption);
     console.log(`[scheduler] Created reel ${reelId} for slot ${slotKey}`);
 
     try {
@@ -605,7 +609,7 @@ const handler: Handler = async () => {
       const submissionIds: Record<string, string> = {};
       for (const platform of enabledPlatforms) {
         try {
-          const id = await blotatoPublish(savedVideoUrl, platform, scheduledForISO);
+          const id = await blotatoPublish(savedVideoUrl, platform, scheduledForISO, caption);
           submissionIds[platform] = id;
           console.log(`[scheduler] Scheduled to ${platform}: ${id}`);
         } catch (err) {

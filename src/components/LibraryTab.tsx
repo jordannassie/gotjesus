@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Reel } from "@/lib/reels-db";
 
 type Filter = "all" | "liked" | "posted" | "not-posted";
@@ -35,17 +35,95 @@ function isPosted(reel: Reel) {
 
 function ReelLibraryCard({
   reel,
+  isActivePlay,
+  onRequestPlay,
+  onRequestStop,
   onFavoriteToggle,
   onDelete,
 }: {
   reel: Reel;
+  isActivePlay: boolean;
+  onRequestPlay: (id: string) => void;
+  onRequestStop: () => void;
   onFavoriteToggle: (id: string, current: boolean) => void;
   onDelete: (id: string) => void;
 }) {
-  const [playing, setPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const manuallyPlaying = useRef(false);
+  const [showControls, setShowControls] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const videoUrl = reel.saved_video_url ?? reel.kie_video_url;
   const posted = isPosted(reel);
+
+  // Play or pause the video whenever isActivePlay changes.
+  // Hover play → attempt with audio, fall back to muted if browser blocks.
+  // Manual play → always unmute after successful play.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+
+    if (isActivePlay) {
+      const tryPlay = async () => {
+        video.muted = false;
+        try {
+          await video.play();
+        } catch {
+          // Browser blocked unmuted autoplay — retry muted (common on mobile/hover)
+          video.muted = true;
+          await video.play().catch(() => {});
+        }
+        // If user manually clicked, unmute after the browser lets us play
+        if (manuallyPlaying.current) {
+          video.muted = false;
+        }
+      };
+      void tryPlay();
+    } else {
+      video.pause();
+      // Reset position only if not in manual mode (hover preview resets; manual keeps position)
+      if (!manuallyPlaying.current) {
+        video.currentTime = 0;
+        video.muted = false;
+      }
+    }
+  }, [isActivePlay, videoUrl]);
+
+  const handleMouseEnter = useCallback(() => {
+    if (!videoUrl) return;
+    onRequestPlay(reel.id);
+  }, [videoUrl, reel.id, onRequestPlay]);
+
+  const handleMouseLeave = useCallback(() => {
+    // Only stop if the user has not manually pressed play
+    if (!manuallyPlaying.current) {
+      onRequestStop();
+    }
+  }, [onRequestStop]);
+
+  const handleClickToggle = useCallback(() => {
+    if (!videoUrl) return;
+    if (isActivePlay && manuallyPlaying.current) {
+      // Manual stop
+      manuallyPlaying.current = false;
+      setShowControls(false);
+      onRequestStop();
+    } else {
+      // Manual play — set flag first so the effect can unmute
+      manuallyPlaying.current = true;
+      setShowControls(true);
+      onRequestPlay(reel.id);
+    }
+  }, [videoUrl, isActivePlay, reel.id, onRequestPlay, onRequestStop]);
+
+  // When another card takes over (isActivePlay → false) reset manual flag
+  useEffect(() => {
+    if (!isActivePlay) {
+      manuallyPlaying.current = false;
+      setShowControls(false);
+    }
+  }, [isActivePlay]);
+
+  const isPlaying = isActivePlay;
 
   return (
     <div className="flex flex-col gap-0 bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
@@ -53,15 +131,17 @@ function ReelLibraryCard({
       <div
         className="relative bg-black cursor-pointer"
         style={{ aspectRatio: "9 / 16" }}
-        onClick={() => setPlaying((v) => !v)}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleClickToggle}
       >
         {videoUrl ? (
           <video
+            ref={videoRef}
             src={videoUrl}
             playsInline
             loop
-            controls={playing}
-            autoPlay={playing}
+            controls={showControls}
             preload="metadata"
             className="absolute inset-0 w-full h-full object-contain"
           />
@@ -70,8 +150,9 @@ function ReelLibraryCard({
             <span className="text-xs text-neutral-600">No video</span>
           </div>
         )}
-        {!playing && videoUrl && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+        {/* Play overlay — hidden while playing */}
+        {!isPlaying && videoUrl && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity">
             <svg className="w-8 h-8 text-white/70" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
             </svg>
@@ -123,7 +204,7 @@ function ReelLibraryCard({
             {videoUrl && (
               <button
                 type="button"
-                onClick={() => void downloadVideo(videoUrl, reel.id)}
+                onClick={(e) => { e.stopPropagation(); void downloadVideo(videoUrl, reel.id); }}
                 title="Download"
                 className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700 transition-colors"
               >
@@ -135,7 +216,7 @@ function ReelLibraryCard({
             {/* Favorite */}
             <button
               type="button"
-              onClick={() => onFavoriteToggle(reel.id, reel.is_favorite)}
+              onClick={(e) => { e.stopPropagation(); onFavoriteToggle(reel.id, reel.is_favorite); }}
               title={reel.is_favorite ? "Unfavorite" : "Favorite"}
               className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
                 reel.is_favorite
@@ -154,14 +235,14 @@ function ReelLibraryCard({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => { onDelete(reel.id); setConfirmDelete(false); }}
+                onClick={(e) => { e.stopPropagation(); onDelete(reel.id); setConfirmDelete(false); }}
                 className="text-[10px] px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800 transition-colors"
               >
                 Confirm
               </button>
               <button
                 type="button"
-                onClick={() => setConfirmDelete(false)}
+                onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
                 className="text-[10px] px-2 py-1 rounded border border-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors"
               >
                 Cancel
@@ -170,7 +251,7 @@ function ReelLibraryCard({
           ) : (
             <button
               type="button"
-              onClick={() => setConfirmDelete(true)}
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
               title="Delete"
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors"
             >
@@ -191,6 +272,8 @@ export default function LibraryTab() {
   const [reels, setReels] = useState<Reel[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
+  // Track which card is currently playing — only one at a time
+  const [playingId, setPlayingId] = useState<string | null>(null);
 
   const fetchReels = useCallback(async () => {
     setLoading(true);
@@ -220,10 +303,11 @@ export default function LibraryTab() {
 
   const handleDelete = useCallback(async (id: string) => {
     setReels((prev) => prev.filter((r) => r.id !== id));
+    if (playingId === id) setPlayingId(null);
     try {
       await fetch(`/api/reels?reelId=${id}`, { method: "DELETE" });
     } catch { void fetchReels(); }
-  }, [fetchReels]);
+  }, [fetchReels, playingId]);
 
   const filtered = reels.filter((r) => {
     if (filter === "liked") return r.is_favorite;
@@ -291,6 +375,9 @@ export default function LibraryTab() {
             <ReelLibraryCard
               key={reel.id}
               reel={reel}
+              isActivePlay={playingId === reel.id}
+              onRequestPlay={setPlayingId}
+              onRequestStop={() => setPlayingId(null)}
               onFavoriteToggle={handleFavoriteToggle}
               onDelete={handleDelete}
             />
