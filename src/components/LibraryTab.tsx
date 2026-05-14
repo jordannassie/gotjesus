@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Reel } from "@/lib/reels-db";
 
+type PostNowStatus = "idle" | "posting" | "done" | "error";
+
 type Filter = "all" | "liked" | "posted" | "not-posted";
 
 function formatDate(iso: string) {
@@ -52,8 +54,43 @@ function ReelLibraryCard({
   const manuallyPlaying = useRef(false);
   const [showControls, setShowControls] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [postNowStatus, setPostNowStatus] = useState<PostNowStatus>("idle");
+  const [postNowLabel, setPostNowLabel] = useState("");
+  const postNowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoUrl = reel.saved_video_url ?? reel.kie_video_url;
   const posted = isPosted(reel);
+
+  const handlePostNow = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (postNowStatus === "posting") return;
+    setPostNowStatus("posting");
+    setPostNowLabel("");
+    if (postNowTimer.current) clearTimeout(postNowTimer.current);
+    try {
+      const res = await fetch("/api/post-reel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reelId: reel.id }),
+      });
+      const data = (await res.json()) as {
+        posted?: string[];
+        error?: string;
+        errors?: Record<string, string>;
+      };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      const platforms = data.posted ?? [];
+      setPostNowLabel(platforms.length > 0 ? `Posted to ${platforms.join(", ")} ✓` : "No platforms posted");
+      setPostNowStatus("done");
+    } catch (err) {
+      setPostNowLabel(err instanceof Error ? err.message : "Post failed");
+      setPostNowStatus("error");
+    } finally {
+      postNowTimer.current = setTimeout(() => {
+        setPostNowStatus("idle");
+        setPostNowLabel("");
+      }, 5000);
+    }
+  }, [reel.id, postNowStatus]);
 
   // Play or pause the video whenever isActivePlay changes.
   // Hover play → attempt with audio, fall back to muted if browser blocks.
@@ -198,7 +235,56 @@ function ReelLibraryCard({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-between pt-1">
+        <div className="flex flex-col gap-1.5 pt-1">
+          {/* Post Now row */}
+          {videoUrl && (
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                onClick={handlePostNow}
+                disabled={postNowStatus === "posting"}
+                className={`w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                  postNowStatus === "done"
+                    ? "bg-emerald-900/60 border border-emerald-800 text-emerald-300"
+                    : postNowStatus === "error"
+                    ? "bg-red-900/60 border border-red-800 text-red-300"
+                    : postNowStatus === "posting"
+                    ? "bg-neutral-800 border border-neutral-700 text-neutral-500 cursor-wait"
+                    : "bg-neutral-800 border border-neutral-700 text-neutral-300 hover:bg-blue-900/40 hover:border-blue-800 hover:text-blue-300"
+                }`}
+              >
+                {postNowStatus === "posting" ? (
+                  <>
+                    <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Posting…
+                  </>
+                ) : postNowStatus === "done" ? (
+                  "Posted ✓"
+                ) : postNowStatus === "error" ? (
+                  "Failed — retry?"
+                ) : (
+                  <>
+                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                    </svg>
+                    Post Now
+                  </>
+                )}
+              </button>
+              {postNowLabel && (postNowStatus === "done" || postNowStatus === "error") && (
+                <p className={`text-[9px] leading-tight text-center px-1 ${
+                  postNowStatus === "error" ? "text-red-400" : "text-emerald-400"
+                }`}>
+                  {postNowLabel}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             {/* Download */}
             {videoUrl && (
@@ -260,6 +346,7 @@ function ReelLibraryCard({
               </svg>
             </button>
           )}
+          </div>
         </div>
       </div>
     </div>
