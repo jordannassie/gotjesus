@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { ContentSlot } from "@/lib/content-slots";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -42,8 +42,51 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
   const [genError, setGenError] = useState("");
   const [testVideoUrl, setTestVideoUrl] = useState<string | null>(null);
   const [showTestVideo, setShowTestVideo] = useState(false);
+  const [genProgress, setGenProgress] = useState(0);
   const genPollCount = useRef(0);
   const genTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const progressStart = useRef(0);
+
+  // Animate the progress bar while generation is running.
+  // Uses a decay curve: fast at first, then slows toward 90% asymptote.
+  // On completion/error, snaps to 100% or holds wherever it stopped.
+  useEffect(() => {
+    const running = ["submitting", "generating", "saving"].includes(genStatus);
+
+    if (running) {
+      if (!progressTimer.current) {
+        progressStart.current = Date.now();
+        setGenProgress(0);
+        progressTimer.current = setInterval(() => {
+          const elapsed = (Date.now() - progressStart.current) / 1000; // seconds
+          // Asymptotic: progress = 90 * (1 - e^(-elapsed / 80))
+          // Reaches ~50% at ~55s, ~75% at ~110s, ~90% at ~184s (never hits 90 before done)
+          const pct = 90 * (1 - Math.exp(-elapsed / 80));
+          setGenProgress(Math.min(pct, 89));
+        }, 400);
+      }
+    } else {
+      if (progressTimer.current) {
+        clearInterval(progressTimer.current);
+        progressTimer.current = null;
+      }
+      if (genStatus === "done") {
+        setGenProgress(100);
+        // Reset after a short display period
+        setTimeout(() => setGenProgress(0), 2000);
+      } else if (genStatus === "error") {
+        setGenProgress(0);
+      }
+    }
+
+    return () => {
+      if (progressTimer.current) {
+        clearInterval(progressTimer.current);
+        progressTimer.current = null;
+      }
+    };
+  }, [genStatus]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
 
@@ -310,6 +353,33 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
             </select>
           </div>
         </div>
+
+        {/* Generation progress bar */}
+        {(genRunning || genStatus === "done") && genProgress > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <div className="w-full h-1.5 rounded-full bg-neutral-800 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out ${
+                  genStatus === "done" ? "bg-emerald-500" : "bg-white"
+                }`}
+                style={{ width: `${genProgress}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-neutral-500 font-medium tracking-wide uppercase">
+                {genStatus === "submitting" && "Submitting job…"}
+                {genStatus === "generating" && "Generating video…"}
+                {genStatus === "saving" && "Saving to library…"}
+                {genStatus === "done" && "Complete"}
+              </span>
+              <span className={`text-[10px] font-semibold tabular-nums ${
+                genStatus === "done" ? "text-emerald-400" : "text-neutral-400"
+              }`}>
+                {Math.round(genProgress)}%
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Action row */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
