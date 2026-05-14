@@ -479,16 +479,41 @@ export default function LibraryTab() {
           type="button"
           onClick={fetchReels}
           disabled={loading}
-          className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors disabled:opacity-50"
         >
-          {loading ? "Loading…" : "Refresh"}
+          {loading ? (
+            <>
+              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Loading…
+            </>
+          ) : "Refresh"}
         </button>
       </div>
 
       {/* Grid */}
       {loading && reels.length === 0 ? (
-        <div className="py-16 text-center">
-          <span className="text-xs text-neutral-600">Loading library…</span>
+        <div className="py-20 flex flex-col items-center justify-center gap-3">
+          <svg
+            className="w-9 h-9 animate-spin text-neutral-600"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle
+              className="opacity-20"
+              cx="12" cy="12" r="10"
+              stroke="currentColor"
+              strokeWidth="3"
+            />
+            <path
+              className="opacity-80"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          <span className="text-xs text-neutral-600 tracking-wide">Loading library…</span>
         </div>
       ) : filtered.length === 0 ? (
         <div className="py-16 text-center">

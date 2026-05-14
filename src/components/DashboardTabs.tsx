@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import DailyContentEngine from "@/components/DailyContentEngine";
 import LibraryTab from "@/components/LibraryTab";
 import ConnectionsTab from "@/components/ConnectionsTab";
@@ -43,8 +43,25 @@ const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
+function PageSpinner() {
+  return (
+    <div className="py-20 flex flex-col items-center justify-center gap-3">
+      <svg className="w-9 h-9 animate-spin text-neutral-600" viewBox="0 0 24 24" fill="none">
+        <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+        <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+      <span className="text-xs text-neutral-600 tracking-wide">Loading…</span>
+    </div>
+  );
+}
+
 export default function DashboardTabs({ contentSlots, blotatoConnected }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("engine");
+  const [isPending, startTransition] = useTransition();
+
+  const handleTabChange = (key: Tab) => {
+    startTransition(() => setActiveTab(key));
+  };
 
   return (
     <div className="flex flex-col gap-0">
@@ -54,7 +71,7 @@ export default function DashboardTabs({ contentSlots, blotatoConnected }: Props)
           <button
             key={key}
             type="button"
-            onClick={() => setActiveTab(key)}
+            onClick={() => handleTabChange(key)}
             className={`flex items-center gap-2 px-5 py-3.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
               activeTab === key
                 ? "border-white text-white"
@@ -63,19 +80,25 @@ export default function DashboardTabs({ contentSlots, blotatoConnected }: Props)
           >
             {icon}
             {label}
+            {isPending && activeTab !== key && (
+              <svg className="w-3 h-3 animate-spin opacity-40 ml-0.5" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
           </button>
         ))}
       </div>
 
       {/* Tab content */}
-      <div className="pt-6 pb-10">
-        {activeTab === "engine" && (
+      <div className={`pt-6 pb-10 transition-opacity duration-150 ${isPending ? "opacity-50" : "opacity-100"}`}>
+        {isPending ? (
+          <PageSpinner />
+        ) : activeTab === "engine" ? (
           <DailyContentEngine initialSlots={contentSlots} />
-        )}
-        {activeTab === "library" && (
+        ) : activeTab === "library" ? (
           <LibraryTab />
-        )}
-        {activeTab === "connections" && (
+        ) : (
           <ConnectionsTab blotatoConnected={blotatoConnected} />
         )}
       </div>
