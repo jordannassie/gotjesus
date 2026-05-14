@@ -101,6 +101,51 @@ function Toggle({
   );
 }
 
+function SectionHeader({
+  title,
+  subtitle,
+  open,
+  onToggle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  open: boolean;
+  onToggle: () => void;
+  right?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="w-full flex items-center justify-between gap-3 text-left group"
+    >
+      <div className="flex flex-col gap-0.5 min-w-0">
+        <span className="text-lg font-semibold tracking-wide text-white group-hover:text-neutral-200 transition-colors">
+          {title}
+        </span>
+        {subtitle && (
+          <span className="text-xs text-neutral-500">{subtitle}</span>
+        )}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {right}
+        <svg
+          className={`w-4 h-4 text-neutral-500 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20"
+          fill="currentColor"
+        >
+          <path
+            fillRule="evenodd"
+            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </div>
+    </button>
+  );
+}
+
 function Spinner({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3">
@@ -392,6 +437,10 @@ export default function VideoEngine({
   // ── UI state ───────────────────────────────────────────────────────────────
   const [promptCopied, setPromptCopied] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Sections default to collapsed
+  const [openEngine, setOpenEngine] = useState(false);
+  const [openSocial, setOpenSocial] = useState(false);
+  const [openVideos, setOpenVideos] = useState(false);
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const genTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -773,77 +822,104 @@ export default function VideoEngine({
   return (
     <div className="w-full flex flex-col gap-6">
       {/* ── Engine status card ── */}
-      <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-6 bg-neutral-950">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold tracking-wide text-white">
-            Cross Discovery Video Engine
-          </h2>
-          <p className="text-xs text-neutral-500">
-            Kie.ai Seedance 2.0 Fast — 9:16 vertical — {resolution} — 8 sec
-            with Got Jesus branded ending
-          </p>
+      <div className="w-full border border-neutral-800 rounded-2xl bg-neutral-950">
+        <div className="px-8 py-5">
+          <SectionHeader
+            title="Cross Discovery Video Engine"
+            subtitle={
+              openEngine
+                ? undefined
+                : `Kie.ai Seedance 2.0 — 9:16 — ${resolution} — 8 sec`
+            }
+            open={openEngine}
+            onToggle={() => setOpenEngine((v) => !v)}
+            right={
+              isRunning ? (
+                <span className="text-xs text-sky-400 font-medium">
+                  In Progress…
+                </span>
+              ) : genState === "failed" ? (
+                <span className="text-xs text-red-400 font-medium">Failed</span>
+              ) : saveState === "complete" ? (
+                <span className="text-xs text-emerald-400 font-medium">
+                  Saved ✓
+                </span>
+              ) : undefined
+            }
+          />
         </div>
 
-        {/* Connection status rows */}
-        <div className="flex flex-col gap-2">
-          {statusRows.map(({ label, status, active }) => (
-            <div
-              key={label}
-              className="flex items-center justify-between py-3 px-4 rounded-lg border border-neutral-800 bg-neutral-900"
-            >
-              <span className="text-sm text-neutral-300">{label}</span>
-              <span
-                className={`text-xs font-medium ${
-                  active ? "text-emerald-500" : "text-neutral-500"
-                }`}
-              >
-                {status}
-              </span>
+        {openEngine && (
+          <div className="px-8 pb-8 flex flex-col gap-6 border-t border-neutral-800">
+            <p className="text-xs text-neutral-500 pt-5">
+              Kie.ai Seedance 2.0 Fast — 9:16 vertical — {resolution} — 8 sec
+              with Got Jesus branded ending
+            </p>
+
+            {/* Connection status rows */}
+            <div className="flex flex-col gap-2">
+              {statusRows.map(({ label, status, active }) => (
+                <div
+                  key={label}
+                  className="flex items-center justify-between py-3 px-4 rounded-lg border border-neutral-800 bg-neutral-900"
+                >
+                  <span className="text-sm text-neutral-300">{label}</span>
+                  <span
+                    className={`text-xs font-medium ${
+                      active ? "text-emerald-500" : "text-neutral-500"
+                    }`}
+                  >
+                    {status}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        {/* Generate Video button */}
-        <button
-          type="button"
-          onClick={handleGenerate}
-          disabled={isRunning}
-          className="w-full py-3 px-6 rounded-lg bg-white text-black text-sm font-semibold tracking-wide hover:bg-neutral-200 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isRunning ? "In Progress..." : "Generate Video"}
-        </button>
+            {/* Generate Video button */}
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={isRunning}
+              className="w-full py-3 px-6 rounded-lg bg-white text-black text-sm font-semibold tracking-wide hover:bg-neutral-200 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isRunning ? "In Progress..." : "Generate Video"}
+            </button>
 
-        {/* Progress spinner */}
-        {isRunning && progressLabel && <Spinner label={progressLabel} />}
+            {/* Progress spinner */}
+            {isRunning && progressLabel && <Spinner label={progressLabel} />}
 
-        {/* Generation error */}
-        {genState === "failed" && genError && (
-          <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
-            <p className="text-xs text-red-400 leading-relaxed">
-              <span className="font-semibold text-red-300">
-                Generation failed:{" "}
-              </span>
-              {genError}
-            </p>
+            {/* Generation error */}
+            {genState === "failed" && genError && (
+              <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
+                <p className="text-xs text-red-400 leading-relaxed">
+                  <span className="font-semibold text-red-300">
+                    Generation failed:{" "}
+                  </span>
+                  {genError}
+                </p>
+              </div>
+            )}
+
+            {/* Save / post error */}
+            {saveState === "failed" && saveError && (
+              <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
+                <p className="text-xs text-red-400 leading-relaxed">
+                  <span className="font-semibold text-red-300">
+                    Save failed:{" "}
+                  </span>
+                  {saveError}
+                </p>
+              </div>
+            )}
+
+            {/* Debug IDs */}
+            {taskId && (
+              <p className="text-xs text-neutral-700 font-mono">
+                task: {taskId}
+                {reelId ? ` · reel: ${reelId}` : ""}
+              </p>
+            )}
           </div>
-        )}
-
-        {/* Save / post error */}
-        {saveState === "failed" && saveError && (
-          <div className="rounded-lg border border-red-900 bg-red-950/40 px-4 py-3">
-            <p className="text-xs text-red-400 leading-relaxed">
-              <span className="font-semibold text-red-300">Save failed: </span>
-              {saveError}
-            </p>
-          </div>
-        )}
-
-        {/* Debug IDs */}
-        {taskId && (
-          <p className="text-xs text-neutral-700 font-mono">
-            task: {taskId}
-            {reelId ? ` · reel: ${reelId}` : ""}
-          </p>
         )}
       </div>
 
@@ -913,17 +989,36 @@ export default function VideoEngine({
       )}
 
       {/* ── Social posting card ── */}
-      <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold tracking-wide text-white">
-            Social Posting
-          </h2>
+      <div className="w-full border border-neutral-800 rounded-2xl bg-neutral-950">
+        <div className="px-8 py-5">
+          <SectionHeader
+            title="Social Posting"
+            subtitle={
+              openSocial
+                ? undefined
+                : blotatoConnected
+                ? "Blotato connected"
+                : "Blotato not connected"
+            }
+            open={openSocial}
+            onToggle={() => setOpenSocial((v) => !v)}
+            right={
+              (manualPost || autoPost) && blotatoConnected ? (
+                <span className="text-xs text-emerald-400 font-medium">
+                  Active
+                </span>
+              ) : undefined
+            }
+          />
+        </div>
+
+        {openSocial && (
+        <div className="px-8 pb-8 flex flex-col gap-5 border-t border-neutral-800 pt-6">
           <p className="text-xs text-neutral-500">
             {blotatoConnected
               ? "Blotato connected. Enable Auto Post to publish reels automatically."
               : "Add Blotato env vars to enable social posting."}
           </p>
-        </div>
 
         {/* Platform toggles */}
         <div className="flex flex-col gap-2">
@@ -1118,45 +1213,68 @@ export default function VideoEngine({
             <p className="text-xs text-red-400 px-1">{scheduleSaveError}</p>
           )}
         </div>
+        </div>
+        )}
       </div>
 
       {/* ── Generated Videos library ── */}
-      <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-5 bg-neutral-950">
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <h2 className="text-lg font-semibold tracking-wide text-white">
-              Generated Videos
-            </h2>
-            <p className="text-xs text-neutral-500">
-              All reels saved to Supabase Storage.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={fetchReels}
-            disabled={reelsLoading}
-            className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors disabled:opacity-40"
-          >
-            {reelsLoading ? "Loading..." : "Refresh"}
-          </button>
+      <div className="w-full border border-neutral-800 rounded-2xl bg-neutral-950">
+        <div className="px-8 py-5">
+          <SectionHeader
+            title="Generated Videos"
+            subtitle={
+              openVideos
+                ? undefined
+                : reels.length > 0
+                ? `${reels.length} reel${reels.length === 1 ? "" : "s"} saved`
+                : "No reels yet"
+            }
+            open={openVideos}
+            onToggle={() => setOpenVideos((v) => !v)}
+            right={
+              reels.length > 0 ? (
+                <span className="text-xs text-neutral-500 font-medium">
+                  {reels.length}
+                </span>
+              ) : undefined
+            }
+          />
         </div>
 
-        {reels.length === 0 && !reelsLoading && (
-          <p className="text-xs text-neutral-600">
-            No reels yet. Generate a video to see it here.
-          </p>
-        )}
+        {openVideos && (
+          <div className="px-8 pb-8 flex flex-col gap-5 border-t border-neutral-800 pt-6">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-neutral-500">
+                All reels saved to Supabase Storage.
+              </p>
+              <button
+                type="button"
+                onClick={fetchReels}
+                disabled={reelsLoading}
+                className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors disabled:opacity-40"
+              >
+                {reelsLoading ? "Loading..." : "Refresh"}
+              </button>
+            </div>
 
-        {reels.length > 0 && (
-          <div className="flex flex-col gap-3">
-            {reels.map((reel) => (
-              <ReelCard
-                key={reel.id}
-                reel={reel}
-                onDelete={handleDeleteReel}
-                deleting={reelDeleteId === reel.id}
-              />
-            ))}
+            {reels.length === 0 && !reelsLoading && (
+              <p className="text-xs text-neutral-600">
+                No reels yet. Generate a video to see it here.
+              </p>
+            )}
+
+            {reels.length > 0 && (
+              <div className="flex flex-col gap-3">
+                {reels.map((reel) => (
+                  <ReelCard
+                    key={reel.id}
+                    reel={reel}
+                    onDelete={handleDeleteReel}
+                    deleting={reelDeleteId === reel.id}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
