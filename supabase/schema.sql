@@ -6,18 +6,27 @@
 -- The app creates the row automatically on first load if it does not exist.
 
 create table if not exists gotjesus_posting_settings (
-  id                uuid        primary key default gen_random_uuid(),
-  created_at        timestamptz not null    default now(),
-  updated_at        timestamptz not null    default now(),
-  auto_post_enabled boolean     not null    default false,
-  instagram_enabled boolean     not null    default true,
-  tiktok_enabled    boolean     not null    default true,
-  youtube_enabled   boolean     not null    default true,
-  posts_per_day     integer     not null    default 3
-                                check (posts_per_day between 1 and 5),
-  posting_times     jsonb       not null    default '["09:00","13:00","19:00"]'::jsonb,
-  timezone          text        not null    default 'America/Los_Angeles'
+  id                  uuid        primary key default gen_random_uuid(),
+  created_at          timestamptz not null    default now(),
+  updated_at          timestamptz not null    default now(),
+  auto_post_enabled   boolean     not null    default false,
+  -- Controls whether clicking "Generate Video" immediately posts via Blotato.
+  -- Independent of auto_post_enabled (which controls the daily scheduler only).
+  manual_post_enabled boolean     not null    default false,
+  instagram_enabled   boolean     not null    default true,
+  tiktok_enabled      boolean     not null    default true,
+  youtube_enabled     boolean     not null    default true,
+  posts_per_day       integer     not null    default 3
+                                  check (posts_per_day between 1 and 5),
+  posting_times       jsonb       not null    default '["09:00","13:00","19:00"]'::jsonb,
+  timezone            text        not null    default 'America/Los_Angeles'
 );
+
+-- ─── Migration: add manual_post_enabled if table already exists ────────────────
+-- If you created the table before this column was added, run this once:
+--
+-- alter table gotjesus_posting_settings
+--   add column if not exists manual_post_enabled boolean not null default false;
 
 -- Enable Row Level Security.
 -- The app uses the service role key which bypasses RLS, but enabling it is

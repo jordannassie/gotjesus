@@ -80,6 +80,17 @@ function getClient() {
   return createClient(url, key);
 }
 
+function requireClient() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error(
+      "Supabase is not configured — SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing. Settings were NOT saved."
+    );
+  }
+  return createClient(url, key);
+}
+
 function rowToSettings(row: DbRow): PostingSettings {
   return {
     id: row.id,
@@ -143,63 +154,70 @@ export async function getPostingSettings(): Promise<PostingSettings> {
 
 /**
  * Partially updates the posting settings row. Creates the row first if it does
- * not exist. Returns the updated settings on success, or a merged local copy on
- * any error.
+ * not exist.
+ *
+ * THROWS on any failure so the caller (API route) can return HTTP 500 and the
+ * UI correctly shows an error instead of a false "Schedule saved ✓".
  */
 export async function updatePostingSettings(
   settings: Partial<PostingSettings>
 ): Promise<PostingSettings> {
-  const supabase = getClient();
-  if (!supabase) return { ...DEFAULT_SETTINGS, ...settings };
+  // Throws if env vars are missing — caller must handle.
+  const supabase = requireClient();
 
-  try {
-    const current = await getPostingSettings();
+  const current = await getPostingSettings();
 
-    const updates: DbUpdate = {
-      updated_at: new Date().toISOString(),
-    };
-    if (settings.autoPostEnabled !== undefined)
-      updates.auto_post_enabled = settings.autoPostEnabled;
-    if (settings.manualPostEnabled !== undefined)
-      updates.manual_post_enabled = settings.manualPostEnabled;
-    if (settings.instagramEnabled !== undefined)
-      updates.instagram_enabled = settings.instagramEnabled;
-    if (settings.tiktokEnabled !== undefined)
-      updates.tiktok_enabled = settings.tiktokEnabled;
-    if (settings.youtubeEnabled !== undefined)
-      updates.youtube_enabled = settings.youtubeEnabled;
-    if (settings.postsPerDay !== undefined)
-      updates.posts_per_day = settings.postsPerDay;
-    if (settings.postingTimes !== undefined)
-      updates.posting_times = settings.postingTimes;
-    if (settings.timezone !== undefined)
-      updates.timezone = settings.timezone;
+  const updates: DbUpdate = {
+    updated_at: new Date().toISOString(),
+  };
+  if (settings.autoPostEnabled !== undefined)
+    updates.auto_post_enabled = settings.autoPostEnabled;
+  if (settings.manualPostEnabled !== undefined)
+    updates.manual_post_enabled = settings.manualPostEnabled;
+  if (settings.instagramEnabled !== undefined)
+    updates.instagram_enabled = settings.instagramEnabled;
+  if (settings.tiktokEnabled !== undefined)
+    updates.tiktok_enabled = settings.tiktokEnabled;
+  if (settings.youtubeEnabled !== undefined)
+    updates.youtube_enabled = settings.youtubeEnabled;
+  if (settings.postsPerDay !== undefined)
+    updates.posts_per_day = settings.postsPerDay;
+  if (settings.postingTimes !== undefined)
+    updates.posting_times = settings.postingTimes;
+  if (settings.timezone !== undefined)
+    updates.timezone = settings.timezone;
 
-    if (!current.id) {
-      // No existing row — insert with specified values
-      const { data, error } = await supabase
-        .from("gotjesus_posting_settings")
-        .insert(updates)
-        .select()
-        .single();
-      if (error || !data) return { ...DEFAULT_SETTINGS, ...settings };
-      return rowToSettings(data as DbRow);
-    }
-
+  if (!current.id) {
+    // No existing row — insert with specified values
     const { data, error } = await supabase
       .from("gotjesus_posting_settings")
-      .update(updates)
-      .eq("id", current.id)
+      .insert(updates)
       .select()
       .single();
-
     if (error || !data) {
-      console.warn("[posting-settings] update error:", error?.message);
-      return { ...current, ...settings };
+      throw new Error(
+        `Failed to create posting settings row: ${error?.message ?? "no data returned"}`
+      );
     }
+    console.log("[posting-settings] Created new row:", data.id);
     return rowToSettings(data as DbRow);
-  } catch (err) {
-    console.warn("[posting-settings] updatePostingSettings exception:", err);
-    return { ...DEFAULT_SETTINGS, ...settings };
   }
+
+  const { data, error } = await supabase
+    .from("gotjesus_posting_settings")
+    .update(updates)
+    .eq("id", current.id)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Failed to update posting settings: ${error?.message ?? "no data returned"}. ` +
+        `Check that the gotjesus_posting_settings table schema is up to date ` +
+        `(manual_post_enabled column may be missing — see supabase/schema.sql migration note).`
+    );
+  }
+
+  console.log("[posting-settings] Updated row:", data.id);
+  return rowToSettings(data as DbRow);
 }
