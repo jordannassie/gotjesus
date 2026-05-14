@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
     await updateReel(reelId, {
       blotato_status: "submitted",
       status: "posted",
+      posting_source: "manual",
       instagram_post_submission_id: submissionIds.instagram ?? reel.instagram_post_submission_id,
       tiktok_post_submission_id: submissionIds.tiktok ?? reel.tiktok_post_submission_id,
       youtube_post_submission_id: submissionIds.youtube ?? reel.youtube_post_submission_id,

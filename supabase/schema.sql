@@ -196,6 +196,16 @@ create policy "service role update content slots"
 create policy "service role delete content slots"
   on gotjesus_content_slots for delete using (true);
 
+-- ─── Migration: add posting_source to gotjesus_reels ─────────────────────────
+-- Tracks whether a posted video was published via Post Now (manual) or the
+-- scheduled auto-post engine. Null means not yet posted.
+-- Run once:
+--
+-- alter table gotjesus_reels
+--   add column if not exists posting_source text;
+--
+-- Valid values: 'manual' | 'auto' | null
+
 -- ─── Migration: add post_caption to content slots and reels ───────────────────
 -- Run these once if the tables already exist:
 --

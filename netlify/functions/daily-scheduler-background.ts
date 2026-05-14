@@ -620,6 +620,7 @@ const handler: Handler = async () => {
       await updateReelRow(supabase, reelId, {
         status: "scheduled",
         blotato_status: "submitted",
+        posting_source: "auto",
         instagram_post_submission_id: submissionIds.instagram ?? null,
         tiktok_post_submission_id: submissionIds.tiktok ?? null,
         youtube_post_submission_id: submissionIds.youtube ?? null,

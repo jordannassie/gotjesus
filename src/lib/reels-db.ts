@@ -56,6 +56,8 @@ export interface Reel {
   content_slot_key: string | null;
   content_slot_name: string | null;
   deleted_at: string | null;
+  // 'manual' = Post Now button, 'auto' = scheduler, null = not yet posted
+  posting_source: "manual" | "auto" | null;
 }
 
 export type CreateReelInput = Partial<Reel> & {
@@ -136,6 +138,7 @@ export async function createReel(data: CreateReelInput): Promise<Reel> {
     content_slot_key: data.content_slot_key ?? null,
     content_slot_name: data.content_slot_name ?? null,
     deleted_at: data.deleted_at ?? null,
+    posting_source: data.posting_source ?? null,
   };
 }
 

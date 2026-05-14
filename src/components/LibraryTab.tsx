@@ -33,6 +33,20 @@ function isPosted(reel: Reel) {
   return !!(reel.instagram_post_submission_id || reel.tiktok_post_submission_id || reel.youtube_post_submission_id);
 }
 
+// Derive a clear posting status label + color from the reel record
+function postingStatus(reel: Reel): { label: string; color: string } {
+  if (reel.status === "failed")
+    return { label: "Post Failed", color: "border-red-900 text-red-400" };
+  if (reel.posting_source === "auto")
+    return { label: "Auto Posted", color: "border-emerald-900 text-emerald-400" };
+  if (reel.posting_source === "manual")
+    return { label: "Manual Post", color: "border-blue-900 text-blue-400" };
+  // Legacy reels posted before posting_source was added
+  if (isPosted(reel))
+    return { label: "Posted", color: "border-emerald-900 text-emerald-400" };
+  return { label: "Not Posted", color: "border-neutral-800 text-neutral-600" };
+}
+
 // ─── Video Card ───────────────────────────────────────────────────────────────
 
 function ReelLibraryCard({
@@ -161,6 +175,9 @@ function ReelLibraryCard({
   }, [isActivePlay]);
 
   const isPlaying = isActivePlay;
+  const pStatus = postingStatus(reel);
+  const caption = reel.caption_used?.trim() || "";
+  const [captionExpanded, setCaptionExpanded] = useState(false);
 
   return (
     <div className="flex flex-col gap-0 bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
@@ -187,7 +204,7 @@ function ReelLibraryCard({
             <span className="text-xs text-neutral-600">No video</span>
           </div>
         )}
-        {/* Play overlay — hidden while playing */}
+        {/* Play overlay */}
         {!isPlaying && videoUrl && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity">
             <svg className="w-8 h-8 text-white/70" viewBox="0 0 20 20" fill="currentColor">
@@ -210,111 +227,126 @@ function ReelLibraryCard({
       </div>
 
       {/* Info */}
-      <div className="px-3 py-2.5 flex flex-col gap-1.5">
+      <div className="px-3 py-2.5 flex flex-col gap-2">
+        {/* Title + date */}
         <div className="flex flex-col gap-0.5">
           {reel.content_slot_name && (
-            <span className="text-[11px] font-semibold text-neutral-300">
+            <span className="text-[11px] font-semibold text-neutral-200 leading-tight">
               {reel.content_slot_name}
             </span>
           )}
           <span className="text-[10px] text-neutral-600">{formatDate(reel.created_at)}</span>
-          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
-              reel.generation_source === "scheduled"
-                ? "border-violet-800 text-violet-400"
-                : "border-neutral-800 text-neutral-500"
-            }`}>
-              {reel.generation_source === "scheduled" ? "Scheduled" : "Manual"}
-            </span>
-            {posted && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-800 text-emerald-400">
-                Posted
-              </span>
-            )}
-          </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex flex-col gap-1.5 pt-1">
-          {/* Post Now row */}
-          {videoUrl && (
-            <div className="flex flex-col gap-1">
-              <button
-                type="button"
-                onClick={handlePostNow}
-                disabled={postNowStatus === "posting"}
-                className={`w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
-                  postNowStatus === "done"
-                    ? "bg-emerald-900/60 border border-emerald-800 text-emerald-300"
-                    : postNowStatus === "error"
-                    ? "bg-red-900/60 border border-red-800 text-red-300"
-                    : postNowStatus === "posting"
-                    ? "bg-neutral-800 border border-neutral-700 text-neutral-500 cursor-wait"
-                    : "bg-neutral-800 border border-neutral-700 text-neutral-300 hover:bg-blue-900/40 hover:border-blue-800 hover:text-blue-300"
-                }`}
-              >
-                {postNowStatus === "posting" ? (
-                  <>
-                    <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Posting…
-                  </>
-                ) : postNowStatus === "done" ? (
-                  "Posted ✓"
-                ) : postNowStatus === "error" ? (
-                  "Failed — retry?"
-                ) : (
-                  <>
-                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                    </svg>
-                    Post Now
-                  </>
-                )}
-              </button>
-              {postNowLabel && (postNowStatus === "done" || postNowStatus === "error") && (
-                <p className={`text-[9px] leading-tight text-center px-1 ${
-                  postNowStatus === "error" ? "text-red-400" : "text-emerald-400"
-                }`}>
-                  {postNowLabel}
-                </p>
-              )}
-            </div>
-          )}
+        {/* Status pills row */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Generation source */}
+          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
+            reel.generation_source === "scheduled"
+              ? "border-violet-900 text-violet-400"
+              : "border-neutral-800 text-neutral-600"
+          }`}>
+            {reel.generation_source === "scheduled" ? "Auto Gen" : "Manual Gen"}
+          </span>
+          {/* Posting status */}
+          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${pStatus.color}`}>
+            {pStatus.label}
+          </span>
+        </div>
 
-          <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            {/* Download */}
-            {videoUrl && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); void downloadVideo(videoUrl, reel.id); }}
-                title="Download"
-                className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700 transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-            )}
-            {/* Favorite */}
+        {/* Caption preview */}
+        <div
+          className="cursor-pointer"
+          onClick={(e) => { e.stopPropagation(); setCaptionExpanded((v) => !v); }}
+          title={captionExpanded ? "Collapse" : "Expand caption"}
+        >
+          {caption ? (
+            <p className={`text-[10px] text-neutral-500 leading-relaxed ${
+              captionExpanded ? "" : "line-clamp-2"
+            }`}>
+              {caption}
+            </p>
+          ) : (
+            <p className="text-[10px] text-neutral-700 italic">No caption saved</p>
+          )}
+        </div>
+
+        {/* Actions row: Post Now pill + icon buttons */}
+        <div className="flex items-center gap-1.5 pt-0.5">
+          {/* Post Now — compact labeled pill */}
+          {videoUrl && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onFavoriteToggle(reel.id, reel.is_favorite); }}
-              title={reel.is_favorite ? "Unfavorite" : "Favorite"}
-              className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors ${
-                reel.is_favorite
-                  ? "border-amber-700 text-amber-400"
-                  : "border-neutral-800 text-neutral-600 hover:text-amber-400 hover:border-amber-800"
+              onClick={handlePostNow}
+              disabled={postNowStatus === "posting"}
+              title={postNowLabel || "Post to all enabled social platforms now"}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-colors flex-shrink-0 ${
+                postNowStatus === "done"
+                  ? "border-emerald-800 text-emerald-400 bg-emerald-900/30"
+                  : postNowStatus === "error"
+                  ? "border-red-800 text-red-400 bg-red-900/30"
+                  : postNowStatus === "posting"
+                  ? "border-neutral-700 text-neutral-500 cursor-wait"
+                  : "border-neutral-700 text-neutral-400 hover:border-blue-800 hover:text-blue-400 hover:bg-blue-900/20"
               }`}
             >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill={reel.is_favorite ? "currentColor" : "none"} stroke="currentColor" strokeWidth={reel.is_favorite ? 0 : 1.5}>
-                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+              {postNowStatus === "posting" ? (
+                <svg className="w-2.5 h-2.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : postNowStatus === "done" ? (
+                <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              ) : postNowStatus === "error" ? (
+                <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                </svg>
+              )}
+              {postNowStatus === "posting" ? "Posting…"
+                : postNowStatus === "done" ? "Posted ✓"
+                : postNowStatus === "error" ? "Failed"
+                : "Post Now"}
+            </button>
+          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Download */}
+          {videoUrl && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); void downloadVideo(videoUrl, reel.id); }}
+              title="Download"
+              className="w-6 h-6 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-neutral-300 hover:border-neutral-700 transition-colors"
+            >
+              <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
               </svg>
             </button>
-          </div>
+          )}
+
+          {/* Favorite */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onFavoriteToggle(reel.id, reel.is_favorite); }}
+            title={reel.is_favorite ? "Unfavorite" : "Favorite"}
+            className={`w-6 h-6 flex items-center justify-center rounded-lg border transition-colors ${
+              reel.is_favorite
+                ? "border-amber-700 text-amber-400"
+                : "border-neutral-800 text-neutral-600 hover:text-amber-400 hover:border-amber-800"
+            }`}
+          >
+            <svg className="w-3 h-3" viewBox="0 0 20 20" fill={reel.is_favorite ? "currentColor" : "none"} stroke="currentColor" strokeWidth={reel.is_favorite ? 0 : 1.5}>
+              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+            </svg>
+          </button>
 
           {/* Delete */}
           {confirmDelete ? (
@@ -322,16 +354,16 @@ function ReelLibraryCard({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onDelete(reel.id); setConfirmDelete(false); }}
-                className="text-[10px] px-2 py-1 rounded bg-red-900 text-red-300 hover:bg-red-800 transition-colors"
+                className="text-[10px] px-1.5 py-0.5 rounded bg-red-900 text-red-300 hover:bg-red-800 transition-colors"
               >
                 Confirm
               </button>
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
-                className="text-[10px] px-2 py-1 rounded border border-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors"
+                className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-500 hover:text-neutral-300 transition-colors"
               >
-                Cancel
+                ✕
               </button>
             </div>
           ) : (
@@ -339,15 +371,23 @@ function ReelLibraryCard({
               type="button"
               onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
               title="Delete"
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors"
+              className="w-6 h-6 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors"
             >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
               </svg>
             </button>
           )}
-          </div>
         </div>
+
+        {/* Inline error/success detail below actions */}
+        {postNowLabel && (postNowStatus === "done" || postNowStatus === "error") && (
+          <p className={`text-[9px] leading-tight ${
+            postNowStatus === "error" ? "text-red-500" : "text-emerald-500"
+          }`}>
+            {postNowLabel}
+          </p>
+        )}
       </div>
     </div>
   );
