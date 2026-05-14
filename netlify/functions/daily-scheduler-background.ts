@@ -292,25 +292,45 @@ async function updateReelRow(
 
 // ─── Kie.ai helpers (inlined) ─────────────────────────────────────────────────
 
+/**
+ * Reads the active official end card URL from gotjesus_brand_settings (DB first,
+ * then GOT_JESUS_ENDCARD_SUPABASE_URL env var as fallback).
+ * Inlined because the scheduler cannot import @/ path aliases.
+ */
+async function getEndCardUrl(supabase: SupabaseClient): Promise<string | undefined> {
+  try {
+    const { data } = await supabase
+      .from("gotjesus_brand_settings")
+      .select("end_card_image_url")
+      .eq("workspace_key", "gotjesus")
+      .maybeSingle();
+    const fromDb = (data as { end_card_image_url?: string | null } | null)?.end_card_image_url;
+    if (fromDb) return fromDb;
+  } catch { /* fall through */ }
+  return process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+}
+
+// Output aspect ratio is LOCKED to "9:16" for all Got Jesus reels.
+const LOCKED_ASPECT_RATIO = "9:16";
+
 async function submitKieJob(
+  supabase: SupabaseClient,
   prompt: string,
   slotImageUrls: string[] = [],
   resolution?: string,
-  durationSeconds?: number,
-  aspectRatio?: string
+  durationSeconds?: number
 ): Promise<string> {
-  const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+  // Read the active end card from DB (falls back to env var)
+  const endCardUrl = await getEndCardUrl(supabase);
   // Slot images first, end card always last so Seedance anchors the branded ending
   const allRefs = [...slotImageUrls, ...(endCardUrl ? [endCardUrl] : [])];
-  // aspect_ratio MUST be sent as the original string ("9:16", not 0.5625)
-  const arStr = aspectRatio ?? "9:16";
   const res = resolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p";
   const dur = durationSeconds ?? 8;
 
-  console.log(`[kie] aspect_ratio payload = ${JSON.stringify(arStr)}`);
+  console.log(`[kie] locked aspect_ratio payload = "${LOCKED_ASPECT_RATIO}"`);
   console.log(
     `[kie] full compact input summary = model=bytedance/seedance-2-fast ` +
-    `duration=${dur} resolution=${res} aspect_ratio=${arStr} ` +
+    `duration=${dur} resolution=${res} aspect_ratio=${LOCKED_ASPECT_RATIO} ` +
     `reference_image_count=${allRefs.length}`
   );
 
@@ -324,7 +344,7 @@ async function submitKieJob(
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: arStr, // must be the string "9:16" — Kie rejects numeric floats
+        aspect_ratio: LOCKED_ASPECT_RATIO, // must be "9:16" string — Kie rejects numeric floats
         resolution: res,
         duration: dur,
         generate_audio: true,
@@ -534,7 +554,6 @@ const handler: Handler = async () => {
     imageUrls: (s.reference_images ?? []).map((img) => img.url),
     resolution: s.resolution || "480p",
     durationSeconds: s.duration_seconds || 8,
-    aspectRatio: s.aspect_ratio || "9:16",
     slotKey: s.slot_key,
   }));
 
@@ -546,7 +565,7 @@ const handler: Handler = async () => {
     "\n\nThe reference image provided is the exact Got Jesus logo end card. Use it precisely and faithfully for the final 1-second branded end card described above: centered white logo on clean black, sharp and undistorted.";
 
   for (const slotInfo of slotsToProcess) {
-    const { timeHHMM, promptText, imageUrls, resolution, durationSeconds, aspectRatio, slotKey } = slotInfo;
+    const { timeHHMM, promptText, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
     const scheduledForISO = pacificTimeToUTCISO(timeHHMM);
     console.log(`[scheduler] Slot ${slotKey} ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
 
@@ -567,7 +586,7 @@ const handler: Handler = async () => {
       console.log(`[prompt] version=${PROMPT_VERSION} source=scheduled slot=${slotKey}`);
       console.log(`[scheduler] Submitting Kie job for reel ${reelId}`);
       const fullPrompt = promptText + NATIVE_ENDING_SUFFIX;
-      const taskId = await submitKieJob(fullPrompt, imageUrls, resolution, durationSeconds, aspectRatio);
+      const taskId = await submitKieJob(supabase, fullPrompt, imageUrls, resolution, durationSeconds);
       await updateReelRow(supabase, reelId, {
         kie_task_id: taskId,
         prompt_used: `[${slotKey}] ${promptText.slice(0, 200)}`,

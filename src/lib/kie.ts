@@ -79,11 +79,12 @@ export interface KieResultJson {
  * paired first_frame_url (422 "Not supporting only transmitting the last frame").
  */
 export async function createVideoTask(prompt: string): Promise<string> {
-  const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+  // Import here to avoid circular deps — kie.ts is a lib, brand-settings is also a lib
+  const { getActiveEndCardUrl } = await import("@/lib/brand-settings");
+  const endCardUrl = await getActiveEndCardUrl();
 
   const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
-  // Debug: confirm exactly what is being sent to Kie
-  console.log(`[kie] aspect_ratio payload = "9:16"`);
+  console.log(`[kie] locked aspect_ratio payload = "9:16"`);
   console.log(
     `[kie] full compact input summary = model=bytedance/seedance-2-fast ` +
     `duration=8 resolution=${resolution} aspect_ratio=9:16 ` +

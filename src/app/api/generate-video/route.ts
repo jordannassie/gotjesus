@@ -5,6 +5,7 @@ import {
   CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX,
   PROMPT_VERSION,
 } from "@/lib/cross-prompt";
+import { getActiveEndCardUrl } from "@/lib/brand-settings";
 
 const KIE_BASE_URL = "https://api.kie.ai";
 
@@ -16,25 +17,29 @@ const KIE_BASE_URL = "https://api.kie.ai";
  * aspect_ratio MUST be sent as the original string format ("9:16", "16:9", "1:1").
  * Kie.ai / Seedance rejects numeric floats like 0.5625 with a 422 error.
  */
+// Output aspect ratio is LOCKED to "9:16" for all Got Jesus reels.
+// Kie.ai expects the colon-format string — do NOT convert to a float.
+const LOCKED_ASPECT_RATIO = "9:16";
+
 async function submitKieJobWithImages(
   prompt: string,
   referenceImageUrls: string[],
   resolution: string,
-  duration: number,
-  aspectRatio: string
+  duration: number
 ): Promise<string> {
-  const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
+  // Read active end card from brand settings (DB), fall back to env var
+  const endCardUrl = await getActiveEndCardUrl();
   // Always include end card last so Seedance anchors the branded ending
   const allRefs = [...referenceImageUrls, ...(endCardUrl ? [endCardUrl] : [])];
 
   const apiKey = process.env.KIE_API_KEY;
   if (!apiKey) throw new Error("KIE_API_KEY is not set.");
 
-  // Debug: confirm exactly what is being sent to Kie
-  console.log(`[kie] aspect_ratio payload = ${JSON.stringify(aspectRatio)}`);
+  // Confirm exactly what is being sent to Kie
+  console.log(`[kie] locked aspect_ratio payload = "${LOCKED_ASPECT_RATIO}"`);
   console.log(
     `[kie] full compact input summary = model=bytedance/seedance-2-fast ` +
-    `duration=${duration} resolution=${resolution} aspect_ratio=${aspectRatio} ` +
+    `duration=${duration} resolution=${resolution} aspect_ratio=${LOCKED_ASPECT_RATIO} ` +
     `reference_image_count=${allRefs.length}`
   );
 
@@ -48,7 +53,7 @@ async function submitKieJobWithImages(
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: aspectRatio, // must be the string "9:16", not a float
+        aspect_ratio: LOCKED_ASPECT_RATIO, // must be "9:16" string — Kie rejects numeric floats
         resolution,
         duration,
         generate_audio: true,
@@ -84,7 +89,6 @@ export async function POST(req: NextRequest) {
       slotKey?: string;
       resolution?: string;
       duration?: number;
-      aspectRatio?: string;
     } = {};
 
     try {
@@ -99,7 +103,6 @@ export async function POST(req: NextRequest) {
       slotKey,
       resolution: slotResolution,
       duration: slotDuration,
-      aspectRatio: slotAspectRatio,
     } = body;
 
     let taskId: string;
@@ -112,15 +115,13 @@ export async function POST(req: NextRequest) {
 
       const resolution = slotResolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p";
       const duration = slotDuration ?? 8;
-      const aspectRatio = slotAspectRatio ?? "9:16";
       const refs = referenceImageUrls ?? [];
 
       taskId = await submitKieJobWithImages(
         promptOverride + CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX,
         refs,
         resolution,
-        duration,
-        aspectRatio
+        duration
       );
     } else {
       // Default generation — canonical prompt from cross-prompt.ts

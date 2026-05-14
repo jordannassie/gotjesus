@@ -1,5 +1,5 @@
-import Image from "next/image";
 import BannerImageEditor from "@/components/BannerImageEditor";
+import EndCardEditor from "@/components/EndCardEditor";
 import DashboardTabs from "@/components/DashboardTabs";
 import { isBlotatoConnected } from "@/lib/blotato";
 import { getBrandSettings } from "@/lib/brand-settings";
@@ -14,6 +14,10 @@ export default async function Home() {
   const blotatoConnected = isBlotatoConnected();
   const brandSettings = await getBrandSettings("gotjesus");
   const heroImage = brandSettings.bannerImageUrl;
+  const activeEndCardUrl =
+    brandSettings.endCardImageUrl ??
+    process.env.GOT_JESUS_ENDCARD_SUPABASE_URL ??
+    "/gotjesus-endcard.png";
   await seedDefaultContentSlotsIfMissing("gotjesus");
   const contentSlots = await getContentSlots("gotjesus");
 
@@ -122,26 +126,10 @@ export default async function Home() {
           />
         </div>
 
-        {/* ── End Card Asset (in Connections tab reference; keep visible below tabs) */}
+        {/* ── Official End Card Asset ────────────────────────────────────────── */}
         <div className="w-full max-w-6xl mx-auto px-6 pb-10 pt-4">
-          <div className="border border-neutral-800 rounded-2xl bg-neutral-900 px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-5">
-            <div className="relative w-16 shrink-0 rounded-xl overflow-hidden border border-neutral-700 shadow">
-              <Image
-                src="/gotjesus-endcard.png"
-                alt="Official Got Jesus end card"
-                width={941}
-                height={1672}
-                className="w-full h-auto"
-                priority
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-sm font-semibold text-white">Official End Card Asset</span>
-              <span className="text-xs text-neutral-500">
-                Appended to every generated reel via <code className="text-neutral-400 bg-neutral-800 px-1 py-0.5 rounded text-[10px]">reference_image_urls</code> — 941&times;1672 px, 9:16
-              </span>
-              <span className="text-xs text-emerald-500 font-medium">Asset confirmed active</span>
-            </div>
+          <div className="border border-neutral-800 rounded-2xl bg-neutral-900 px-6 py-5">
+            <EndCardEditor currentEndCardUrl={activeEndCardUrl} />
           </div>
         </div>
 

@@ -24,6 +24,8 @@ export interface BrandSettings {
   workspaceKey: string;
   bannerImageUrl: string;
   bannerImagePath?: string | null;
+  endCardImageUrl?: string | null;
+  endCardImagePath?: string | null;
 }
 
 interface DbRow {
@@ -33,6 +35,8 @@ interface DbRow {
   workspace_key: string;
   banner_image_url: string | null;
   banner_image_path: string | null;
+  end_card_image_url: string | null;
+  end_card_image_path: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,6 +65,8 @@ function rowToSettings(row: DbRow): BrandSettings {
     workspaceKey: row.workspace_key,
     bannerImageUrl: row.banner_image_url ?? DEFAULT_BANNER_URL,
     bannerImagePath: row.banner_image_path,
+    endCardImageUrl: row.end_card_image_url ?? null,
+    endCardImagePath: row.end_card_image_path ?? null,
   };
 }
 
@@ -68,6 +74,8 @@ const DEFAULT_SETTINGS: BrandSettings = {
   workspaceKey: "gotjesus",
   bannerImageUrl: DEFAULT_BANNER_URL,
   bannerImagePath: null,
+  endCardImageUrl: null,
+  endCardImagePath: null,
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -141,4 +149,57 @@ export async function updateBannerImageSettings({
 
   console.log("[brand-settings] Banner updated for workspace:", workspaceKey);
   return rowToSettings(data as DbRow);
+}
+
+/**
+ * Creates or updates the official end card image for a workspace.
+ * Only writes end_card_image_url / end_card_image_path — does not
+ * touch the banner image fields.
+ */
+export async function updateEndCardSettings({
+  workspaceKey = "gotjesus",
+  endCardImageUrl,
+  endCardImagePath,
+}: {
+  workspaceKey?: string;
+  endCardImageUrl: string;
+  endCardImagePath?: string | null;
+}): Promise<BrandSettings> {
+  const supabase = requireClient();
+
+  const payload = {
+    workspace_key: workspaceKey,
+    end_card_image_url: endCardImageUrl,
+    end_card_image_path: endCardImagePath ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from("gotjesus_brand_settings")
+    .upsert(payload, { onConflict: "workspace_key" })
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Failed to save end card settings: ${error?.message ?? "no data returned"}`
+    );
+  }
+
+  console.log("[brand-settings] End card updated for workspace:", workspaceKey);
+  return rowToSettings(data as DbRow);
+}
+
+/**
+ * Returns the active end card URL for generation.
+ * Priority: brand_settings.end_card_image_url → GOT_JESUS_ENDCARD_SUPABASE_URL env var
+ */
+export async function getActiveEndCardUrl(
+  workspaceKey = "gotjesus"
+): Promise<string | undefined> {
+  try {
+    const settings = await getBrandSettings(workspaceKey);
+    if (settings.endCardImageUrl) return settings.endCardImageUrl;
+  } catch { /* fall through */ }
+  return process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
 }

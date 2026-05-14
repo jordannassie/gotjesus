@@ -196,6 +196,13 @@ create policy "service role update content slots"
 create policy "service role delete content slots"
   on gotjesus_content_slots for delete using (true);
 
+-- ─── Migration: add editable end card columns to gotjesus_brand_settings ──────
+-- Run these once if the table already exists:
+--
+-- alter table gotjesus_brand_settings
+--   add column if not exists end_card_image_url  text,
+--   add column if not exists end_card_image_path text;
+
 -- ─── Migration: add Library + slot-linking columns to gotjesus_reels ──────────
 -- Run these once if the table already exists:
 --

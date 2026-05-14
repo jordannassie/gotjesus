@@ -15,8 +15,30 @@ const POLL_INTERVAL_MS = 6000;
 const MAX_POLLS = 120;
 
 const DURATION_OPTIONS = [5, 8, 10, 12, 15];
-const ASPECT_OPTIONS = ["9:16", "16:9", "1:1"];
 const RESOLUTION_OPTIONS = ["480p", "720p", "1080p"];
+
+// Kie.ai validates reference image aspect ratios to be within this range.
+const KIE_MIN_RATIO = 0.4;
+const KIE_MAX_RATIO = 2.5;
+
+function checkImageAspectRatio(
+  file: File
+): Promise<{ ok: boolean; ratio: number; filename: string }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const ratio = img.width / img.height;
+      URL.revokeObjectURL(url);
+      resolve({ ok: ratio >= KIE_MIN_RATIO && ratio <= KIE_MAX_RATIO, ratio, filename: file.name });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve({ ok: true, ratio: 1, filename: file.name }); // allow through if we can't measure
+    };
+    img.src = url;
+  });
+}
 
 export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
   const [slotName, setSlotName] = useState(slot.slotName);
@@ -24,7 +46,6 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
   const [enabled, setEnabled] = useState(slot.enabled);
   const [scheduledTime, setScheduledTime] = useState(slot.scheduledPostTime);
   const [duration, setDuration] = useState(slot.durationSeconds);
-  const [aspectRatio, setAspectRatio] = useState(slot.aspectRatio);
   const [resolution, setResolution] = useState(slot.resolution);
   const [images, setImages] = useState(slot.referenceImages);
 
@@ -58,7 +79,7 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
           enabled,
           scheduledPostTime: scheduledTime,
           durationSeconds: duration,
-          aspectRatio,
+          aspectRatio: "9:16", // locked — output is always 9:16 vertical
           resolution,
         }),
       });
@@ -71,7 +92,7 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
       setSaveError(err instanceof Error ? err.message : "Save failed.");
       setSaveStatus("error");
     }
-  }, [slot.id, slotName, promptText, enabled, scheduledTime, duration, aspectRatio, resolution, onSlotUpdate]);
+  }, [slot.id, slotName, promptText, enabled, scheduledTime, duration, resolution, onSlotUpdate]);
 
   // ── Image upload ──────────────────────────────────────────────────────────
 
@@ -82,6 +103,18 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
     setUploadingImage(true);
     setUploadError("");
     try {
+      // Validate image dimensions before uploading.
+      // Kie.ai rejects reference images whose aspect ratio is outside [0.4, 2.5].
+      const check = await checkImageAspectRatio(file);
+      if (!check.ok) {
+        const r = check.ratio.toFixed(2);
+        throw new Error(
+          `"${check.filename}" has an unsupported aspect ratio (${r}). ` +
+          `Kie requires images between 0.4:1 and 2.5:1 — ` +
+          `please use a portrait or square image instead.`
+        );
+      }
+
       const form = new FormData();
       form.append("slotId", slot.id);
       form.append("file", file);
@@ -153,7 +186,7 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
           slotKey: slot.slotKey,
           resolution,
           duration,
-          aspectRatio,
+          // aspectRatio omitted — locked to "9:16" server-side
         }),
       });
       const data = (await res.json()) as { taskId?: string; error?: string };
@@ -184,7 +217,7 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
     } catch (err) {
       setGenStatus("error"); setGenError(err instanceof Error ? err.message : "Submit error.");
     }
-  }, [promptText, images, slot.slotKey, slotName, resolution, duration, aspectRatio, pollGen, stopGenPoll]);
+  }, [promptText, images, slot.slotKey, slotName, resolution, duration, pollGen, stopGenPoll]);
 
   const genRunning = ["submitting", "generating", "saving"].includes(genStatus);
   const genLabel =
@@ -287,18 +320,10 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
             </select>
           </div>
 
-          {/* Aspect ratio — editable */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900">
+          {/* Aspect ratio — locked to 9:16 */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900" title="Output is locked to 9:16 vertical">
             <span className="text-[10px] text-neutral-600 uppercase tracking-widest">Aspect</span>
-            <select
-              value={aspectRatio}
-              onChange={(e) => setAspectRatio(e.target.value)}
-              className="text-xs text-neutral-300 bg-transparent outline-none cursor-pointer"
-            >
-              {ASPECT_OPTIONS.map((a) => (
-                <option key={a} value={a} className="bg-neutral-900">{a}</option>
-              ))}
-            </select>
+            <span className="text-xs text-neutral-500 font-medium">9:16 ⚙</span>
           </div>
 
           {/* Resolution — editable */}
