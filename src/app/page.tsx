@@ -6,6 +6,11 @@ import { CROSS_DISCOVERY_PROMPT, CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cr
 import { getPostingSettings } from "@/lib/posting-settings";
 import { getBrandSettings } from "@/lib/brand-settings";
 
+// Force server-side rendering on every request so getBrandSettings() and
+// getPostingSettings() always return fresh data from Supabase, and
+// router.refresh() after a banner upload actually re-fetches live values.
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   // All env/server logic runs here — nothing secret leaks to the client bundle
   const blotatoConnected = isBlotatoConnected();
