@@ -292,31 +292,29 @@ async function updateReelRow(
 
 // ─── Kie.ai helpers (inlined) ─────────────────────────────────────────────────
 
-/**
- * Converts a "W:H" string to the numeric float Kie.ai requires.
- * e.g. "9:16" → 0.5625, "16:9" → 1.7778, "1:1" → 1.0
- */
-function aspectRatioToFloat(ar: string): number {
-  if (ar.includes(":")) {
-    const [w, h] = ar.split(":").map(Number);
-    return w / h;
-  }
-  return parseFloat(ar);
-}
-
 async function submitKieJob(
   prompt: string,
   slotImageUrls: string[] = [],
   resolution?: string,
   durationSeconds?: number,
-  aspectRatioStr?: string
+  aspectRatio?: string
 ): Promise<string> {
   const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
   // Slot images first, end card always last so Seedance anchors the branded ending
   const allRefs = [...slotImageUrls, ...(endCardUrl ? [endCardUrl] : [])];
-  // Kie.ai requires a numeric float (0.4–2.5 range), not the "9:16" string format
-  const aspectRatioFloat = aspectRatioToFloat(aspectRatioStr ?? "9:16");
-  const res = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
+  // aspect_ratio MUST be sent as the original string ("9:16", not 0.5625)
+  const arStr = aspectRatio ?? "9:16";
+  const res = resolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p";
+  const dur = durationSeconds ?? 8;
+
+  console.log(`[kie] aspect_ratio payload = ${JSON.stringify(arStr)}`);
+  console.log(
+    `[kie] full compact input summary = model=bytedance/seedance-2-fast ` +
+    `duration=${dur} resolution=${res} aspect_ratio=${arStr} ` +
+    `reference_image_count=${allRefs.length}`
+  );
+
+  const fetchRes = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.KIE_API_KEY}`,
@@ -326,19 +324,19 @@ async function submitKieJob(
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: aspectRatioFloat,
-        resolution: resolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p",
-        duration: durationSeconds ?? 8,
+        aspect_ratio: arStr, // must be the string "9:16" — Kie rejects numeric floats
+        resolution: res,
+        duration: dur,
         generate_audio: true,
         ...(allRefs.length > 0 ? { reference_image_urls: allRefs } : {}),
       },
     }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Kie createTask HTTP ${res.status}: ${text}`);
+  if (!fetchRes.ok) {
+    const text = await fetchRes.text();
+    throw new Error(`Kie createTask HTTP ${fetchRes.status}: ${text}`);
   }
-  const json = (await res.json()) as { data?: { taskId?: string } };
+  const json = (await fetchRes.json()) as { data?: { taskId?: string } };
   const taskId = json.data?.taskId;
   if (!taskId) throw new Error("Kie: no taskId returned");
   return taskId;

@@ -81,6 +81,15 @@ export interface KieResultJson {
 export async function createVideoTask(prompt: string): Promise<string> {
   const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
 
+  const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
+  // Debug: confirm exactly what is being sent to Kie
+  console.log(`[kie] aspect_ratio payload = "9:16"`);
+  console.log(
+    `[kie] full compact input summary = model=bytedance/seedance-2-fast ` +
+    `duration=8 resolution=${resolution} aspect_ratio=9:16 ` +
+    `reference_image_count=${endCardUrl ? 1 : 0}`
+  );
+
   const response = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
     method: "POST",
     headers: authHeaders(),
@@ -88,8 +97,8 @@ export async function createVideoTask(prompt: string): Promise<string> {
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: 9 / 16, // Kie.ai requires a numeric float (0.5625), not the string "9:16"
-        resolution: process.env.KIE_VIDEO_RESOLUTION || "480p",
+        aspect_ratio: "9:16", // must be the string format — Kie rejects numeric floats
+        resolution,
         duration: 8,
         generate_audio: true,
         ...(endCardUrl ? { reference_image_urls: [endCardUrl] } : {}),
