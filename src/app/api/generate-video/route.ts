@@ -17,7 +17,8 @@ async function submitKieJobWithImages(
   prompt: string,
   referenceImageUrls: string[],
   resolution: string,
-  duration: number
+  duration: number,
+  aspectRatio: string
 ): Promise<string> {
   const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
   // Always include end card last so Seedance anchors the branded ending
@@ -36,7 +37,7 @@ async function submitKieJobWithImages(
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: "9:16",
+        aspect_ratio: aspectRatio,
         resolution,
         duration,
         generate_audio: true,
@@ -72,6 +73,7 @@ export async function POST(req: NextRequest) {
       slotKey?: string;
       resolution?: string;
       duration?: number;
+      aspectRatio?: string;
     } = {};
 
     try {
@@ -86,6 +88,7 @@ export async function POST(req: NextRequest) {
       slotKey,
       resolution: slotResolution,
       duration: slotDuration,
+      aspectRatio: slotAspectRatio,
     } = body;
 
     let taskId: string;
@@ -98,13 +101,15 @@ export async function POST(req: NextRequest) {
 
       const resolution = slotResolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p";
       const duration = slotDuration ?? 8;
+      const aspectRatio = slotAspectRatio ?? "9:16";
       const refs = referenceImageUrls ?? [];
 
       taskId = await submitKieJobWithImages(
         promptOverride + CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX,
         refs,
         resolution,
-        duration
+        duration,
+        aspectRatio
       );
     } else {
       // Default generation — canonical prompt from cross-prompt.ts

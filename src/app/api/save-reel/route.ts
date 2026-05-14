@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
     kieTaskId?: string;
     autoPost?: boolean;
     platforms?: string[];
+    contentSlotKey?: string;
+    contentSlotName?: string;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -31,7 +33,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { kieVideoUrl, kieTaskId, autoPost = false, platforms = [] } = body;
+  const {
+    kieVideoUrl,
+    kieTaskId,
+    autoPost = false,
+    platforms = [],
+    contentSlotKey,
+    contentSlotName,
+  } = body;
 
   if (!kieVideoUrl)
     return NextResponse.json({ error: "kieVideoUrl is required" }, { status: 400 });
@@ -74,6 +83,8 @@ export async function POST(req: NextRequest) {
       instagram_enabled: platforms.includes("instagram"),
       tiktok_enabled: platforms.includes("tiktok"),
       youtube_enabled: platforms.includes("youtube"),
+      content_slot_key: contentSlotKey ?? null,
+      content_slot_name: contentSlotName ?? null,
     });
     console.log(`[save-reel route] Created reel row ${reelId}`);
   } catch (err) {

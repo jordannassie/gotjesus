@@ -195,3 +195,15 @@ create policy "service role update content slots"
 
 create policy "service role delete content slots"
   on gotjesus_content_slots for delete using (true);
+
+-- ─── Migration: add Library + slot-linking columns to gotjesus_reels ──────────
+-- Run these once if the table already exists:
+--
+-- alter table gotjesus_reels
+--   add column if not exists is_favorite      boolean      not null default false,
+--   add column if not exists content_slot_key  text,
+--   add column if not exists content_slot_name text,
+--   add column if not exists deleted_at        timestamptz;
+--
+-- create index if not exists gotjesus_reels_deleted_at_idx
+--   on gotjesus_reels (deleted_at) where deleted_at is null;

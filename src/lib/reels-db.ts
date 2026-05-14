@@ -51,6 +51,11 @@ export interface Reel {
   tiktok_error: string | null;
   youtube_error: string | null;
   error_message: string | null;
+  // Library features
+  is_favorite: boolean;
+  content_slot_key: string | null;
+  content_slot_name: string | null;
+  deleted_at: string | null;
 }
 
 export type CreateReelInput = Partial<Reel> & {
@@ -127,6 +132,10 @@ export async function createReel(data: CreateReelInput): Promise<Reel> {
     tiktok_error: data.tiktok_error ?? null,
     youtube_error: data.youtube_error ?? null,
     error_message: data.error_message ?? null,
+    is_favorite: data.is_favorite ?? false,
+    content_slot_key: data.content_slot_key ?? null,
+    content_slot_name: data.content_slot_name ?? null,
+    deleted_at: data.deleted_at ?? null,
   };
 }
 
@@ -159,11 +168,12 @@ export async function getReel(id: string): Promise<Reel | null> {
   return (data as Reel) ?? null;
 }
 
-export async function getRecentReels(limit = 20): Promise<Reel[]> {
+export async function getRecentReels(limit = 50): Promise<Reel[]> {
   const supabase = getClient();
   const { data, error } = await supabase
     .from("gotjesus_reels")
     .select("*")
+    .is("deleted_at", null) // exclude soft-deleted
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) {

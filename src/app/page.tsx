@@ -1,7 +1,6 @@
 import Image from "next/image";
-import VideoEngine from "@/components/VideoEngine";
 import BannerImageEditor from "@/components/BannerImageEditor";
-import DailyContentEngine from "@/components/DailyContentEngine";
+import DashboardTabs from "@/components/DashboardTabs";
 import { isBlotatoConnected } from "@/lib/blotato";
 import { CROSS_DISCOVERY_PROMPT, CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
 import { getPostingSettings } from "@/lib/posting-settings";
@@ -14,13 +13,11 @@ import { getContentSlots, seedDefaultContentSlotsIfMissing } from "@/lib/content
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  // All env/server logic runs here — nothing secret leaks to the client bundle
   const blotatoConnected = isBlotatoConnected();
   const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
   const initialSettings = await getPostingSettings();
   const brandSettings = await getBrandSettings("gotjesus");
   const heroImage = brandSettings.bannerImageUrl;
-  // Seed content slots if this is the first load, then fetch them
   await seedDefaultContentSlotsIfMissing("gotjesus");
   const contentSlots = await getContentSlots("gotjesus");
 
@@ -30,7 +27,6 @@ export default async function Home() {
       {/* ── Dashboard Header ────────────────────────────────────────────────── */}
       <header className="w-full border-b border-neutral-800 bg-neutral-950">
         <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          {/* Left — brand + title */}
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-500">
               User Dashboard
@@ -43,7 +39,6 @@ export default async function Home() {
             </p>
           </div>
 
-          {/* Right — status pills + avatar */}
           <div className="flex items-center gap-3">
             <div className="flex flex-col items-center gap-0.5 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 min-w-[100px]">
               <span className="text-[9px] font-semibold tracking-widest uppercase text-neutral-500">
@@ -53,22 +48,13 @@ export default async function Home() {
                 Unlimited Beta
               </span>
             </div>
-
-            {/* User avatar circle */}
             <div className="flex items-center gap-2.5 bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2">
-              {/* Initials avatar */}
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-neutral-600 to-neutral-800 border border-neutral-700 flex items-center justify-center flex-shrink-0">
-                <span className="text-[11px] font-bold text-white tracking-wide select-none">
-                  GJ
-                </span>
+                <span className="text-[11px] font-bold text-white tracking-wide select-none">GJ</span>
               </div>
               <div className="flex flex-col gap-0">
-                <span className="text-xs font-semibold text-white leading-tight">
-                  GotJesus Admin
-                </span>
-                <span className="text-[10px] text-neutral-500 leading-tight">
-                  Beta
-                </span>
+                <span className="text-xs font-semibold text-white leading-tight">GotJesus Admin</span>
+                <span className="text-[10px] text-neutral-500 leading-tight">Beta</span>
               </div>
             </div>
           </div>
@@ -76,7 +62,7 @@ export default async function Home() {
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────────── */}
-      <main className="flex flex-col items-center flex-1">
+      <main className="flex flex-col flex-1">
 
         {/* ── Compact Banner ────────────────────────────────────────────────── */}
         <div className="w-full max-w-6xl mx-auto px-6 pt-6">
@@ -97,9 +83,7 @@ export default async function Home() {
                   "linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.55) 55%, rgba(10,10,10,0.96) 100%)",
               }}
             />
-            {/* Update Banner control — top-right corner */}
             <BannerImageEditor initialBannerUrl={heroImage} />
-
             <div className="absolute bottom-0 left-0 right-0 px-6 pb-7 flex flex-col gap-2">
               <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white drop-shadow-lg leading-tight">
                 Create Automated GotJesus Reels
@@ -128,22 +112,16 @@ export default async function Home() {
                 <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-500">
                   {label}
                 </span>
-                <span className={`text-sm font-semibold ${accent}`}>
-                  {value}
-                </span>
+                <span className={`text-sm font-semibold ${accent}`}>{value}</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* ── Daily Content Engine ─────────────────────────────────────────── */}
-        <div className="w-full max-w-6xl mx-auto px-6 pt-5">
-          <DailyContentEngine initialSlots={contentSlots} />
-        </div>
-
-        {/* ── Video Engine ─────────────────────────────────────────────────── */}
-        <div className="w-full max-w-xl mx-auto px-6 pt-8">
-          <VideoEngine
+        {/* ── Dashboard Tabs (Content Engine / Library / Connections) ──────── */}
+        <div className="w-full max-w-6xl mx-auto px-6 pt-6">
+          <DashboardTabs
+            contentSlots={contentSlots}
             blotatoConnected={blotatoConnected}
             promptSummary={CROSS_DISCOVERY_PROMPT_SUMMARY}
             fullPrompt={CROSS_DISCOVERY_PROMPT}
@@ -152,48 +130,25 @@ export default async function Home() {
           />
         </div>
 
-        {/* ── End Card Asset ───────────────────────────────────────────────── */}
-        <div className="w-full max-w-xl mx-auto px-6 pt-6 pb-10">
-          <div className="w-full border border-neutral-800 rounded-2xl p-8 flex flex-col gap-6 bg-neutral-900">
+        {/* ── End Card Asset (in Connections tab reference; keep visible below tabs) */}
+        <div className="w-full max-w-6xl mx-auto px-6 pb-10 pt-4">
+          <div className="border border-neutral-800 rounded-2xl bg-neutral-900 px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-5">
+            <div className="relative w-16 shrink-0 rounded-xl overflow-hidden border border-neutral-700 shadow">
+              <Image
+                src="/gotjesus-endcard.png"
+                alt="Official Got Jesus end card"
+                width={941}
+                height={1672}
+                className="w-full h-auto"
+                priority
+              />
+            </div>
             <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold tracking-wide text-white">
-                Official End Card Asset
-              </h2>
-              <p className="text-xs text-neutral-500">
-                Official Got Jesus end card asset will be appended to every final
-                video.
-              </p>
-            </div>
-
-            <div className="flex flex-col items-center gap-4">
-              <div className="relative w-36 rounded-xl overflow-hidden border border-neutral-700 shadow-lg">
-                <Image
-                  src="/gotjesus-endcard.png"
-                  alt="Official Got Jesus end card"
-                  width={941}
-                  height={1672}
-                  className="w-full h-auto"
-                  priority
-                />
-              </div>
-              <div className="flex flex-col items-center gap-1 text-center">
-                <span className="text-xs font-medium text-emerald-500">
-                  Asset confirmed
-                </span>
-                <span className="text-xs text-neutral-600">
-                  gotjesus-endcard.png — 941 x 1672 px (9:16)
-                </span>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-3">
-              <p className="text-xs text-neutral-400 leading-relaxed">
-                <span className="text-neutral-300 font-medium">
-                  Video pipeline order:
-                </span>{" "}
-                Kie.ai Seedance 2.0 generates the main vertical content, then
-                FFmpeg appends this end card — centered, full-frame, clean hold.
-              </p>
+              <span className="text-sm font-semibold text-white">Official End Card Asset</span>
+              <span className="text-xs text-neutral-500">
+                Appended to every generated reel via <code className="text-neutral-400 bg-neutral-800 px-1 py-0.5 rounded text-[10px]">reference_image_urls</code> — 941&times;1672 px, 9:16
+              </span>
+              <span className="text-xs text-emerald-500 font-medium">Asset confirmed active</span>
             </div>
           </div>
         </div>
@@ -203,15 +158,12 @@ export default async function Home() {
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <footer className="w-full border-t border-neutral-800 bg-neutral-950">
         <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col items-center gap-2 text-center">
-          <span className="text-sm font-semibold text-neutral-300">
-            GotJesus Reel Engine
-          </span>
+          <span className="text-sm font-semibold text-neutral-300">GotJesus Reel Engine</span>
           <p className="text-xs text-neutral-500 max-w-sm leading-relaxed">
             Automated branded reel generation for GotJesus social content.
           </p>
           <p className="text-[11px] text-neutral-700 max-w-md leading-relaxed">
-            Built for repeatable 9:16 reel creation, branded end cards, and
-            scheduled social publishing.
+            Built for repeatable 9:16 reel creation, branded end cards, and scheduled social publishing.
           </p>
         </div>
       </footer>
