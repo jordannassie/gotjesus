@@ -380,7 +380,7 @@ export default function ContentSlotCard({
           {images.map((img) => (
             <div key={img.path} className="group relative flex items-center gap-1 bg-neutral-800 border border-neutral-700 rounded-lg overflow-hidden pr-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={img.url} alt={img.name} className="w-8 h-8 object-cover flex-shrink-0" />
+              <img src={img.url} alt={img.name} className="w-16 h-16 object-cover flex-shrink-0" />
               <span className="text-[10px] text-neutral-400 max-w-[60px] truncate">{img.name}</span>
               <button
                 type="button"
