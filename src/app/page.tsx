@@ -32,7 +32,7 @@ export default async function Home() {
               User Dashboard
             </span>
             <h1 className="text-xl font-bold tracking-tight text-white leading-tight">
-              GotJesus Reel Engine
+              Got Jesus?
             </h1>
             <p className="text-xs text-neutral-500 leading-snug">
               Automated branded reel creation and social publishing
@@ -92,7 +92,7 @@ export default async function Home() {
             <BannerImageEditor initialBannerUrl={heroImage} />
             <div className="absolute bottom-0 left-0 right-0 px-6 pb-7 flex flex-col gap-2">
               <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white drop-shadow-lg leading-tight">
-                Create Automated GotJesus Reels
+                Got Jesus?
               </h2>
               <p className="text-xs sm:text-sm text-neutral-300 leading-relaxed max-w-lg drop-shadow">
                 Generate vertical social videos, append the official end card,
