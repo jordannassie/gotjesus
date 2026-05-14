@@ -40,7 +40,7 @@ function postingStatus(reel: Reel): { label: string; color: string } {
   if (reel.posting_source === "auto")
     return { label: "Auto Posted", color: "border-emerald-900 text-emerald-400" };
   if (reel.posting_source === "manual")
-    return { label: "Manual Post", color: "border-blue-900 text-blue-400" };
+    return { label: "Posted", color: "border-emerald-900 text-emerald-400" };
   // Legacy reels posted before posting_source was added
   if (isPosted(reel))
     return { label: "Posted", color: "border-emerald-900 text-emerald-400" };
