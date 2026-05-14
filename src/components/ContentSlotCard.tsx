@@ -17,47 +17,10 @@ const MAX_POLLS = 120;
 const DURATION_OPTIONS = [5, 8, 10, 12, 15];
 const RESOLUTION_OPTIONS = ["480p", "720p", "1080p"];
 
-// Kie.ai validates reference image aspect ratios to be within this range.
-const KIE_MIN_RATIO = 0.4;
-const KIE_MAX_RATIO = 2.5;
-
-/** Check a File's pixel dimensions before uploading. */
-function checkImageAspectRatio(
-  file: File
-): Promise<{ ok: boolean; ratio: number; filename: string }> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const ratio = img.width / img.height;
-      URL.revokeObjectURL(url);
-      resolve({ ok: ratio >= KIE_MIN_RATIO && ratio <= KIE_MAX_RATIO, ratio, filename: file.name });
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve({ ok: true, ratio: 1, filename: file.name });
-    };
-    img.src = url;
-  });
-}
-
-/** Check an already-uploaded image URL's pixel dimensions before sending to Kie. */
-function checkUrlAspectRatio(
-  url: string,
-  filename: string
-): Promise<{ ok: boolean; ratio: number; filename: string }> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const ratio = img.naturalWidth / img.naturalHeight;
-      resolve({ ok: ratio >= KIE_MIN_RATIO && ratio <= KIE_MAX_RATIO, ratio, filename });
-    };
-    img.onerror = () => {
-      resolve({ ok: true, ratio: 1, filename }); // can't measure → allow through
-    };
-    img.src = url;
-  });
-}
+// No client-side aspect ratio validation on reference images.
+// The server (generate-video route) silently filters out any image whose pixel
+// dimensions fall outside Kie.ai's accepted range [0.4–2.5] before the request
+// is sent. This lets users upload brand assets at any size without errors.
 
 export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
   const [slotName, setSlotName] = useState(slot.slotName);
@@ -122,18 +85,6 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
     setUploadingImage(true);
     setUploadError("");
     try {
-      // Validate image dimensions before uploading.
-      // Kie.ai rejects reference images whose aspect ratio is outside [0.4, 2.5].
-      const check = await checkImageAspectRatio(file);
-      if (!check.ok) {
-        const r = check.ratio.toFixed(2);
-        throw new Error(
-          `"${check.filename}" has an unsupported aspect ratio (${r}). ` +
-          `Kie requires images between 0.4:1 and 2.5:1 — ` +
-          `please use a portrait or square image instead.`
-        );
-      }
-
       const form = new FormData();
       form.append("slotId", slot.id);
       form.append("file", file);
@@ -196,22 +147,6 @@ export default function ContentSlotCard({ slot, onSlotUpdate }: Props) {
     setGenStatus("submitting"); setGenError(""); setTestVideoUrl(null); setShowTestVideo(false);
     genPollCount.current = 0;
     try {
-      // Validate all existing reference images before calling Kie.
-      // Kie rejects reference images with ratio < 0.4 or > 2.5.
-      // This catches images that were uploaded before the upload-time check was added.
-      for (const img of images) {
-        const check = await checkUrlAspectRatio(img.url, img.name);
-        if (!check.ok) {
-          setGenStatus("error");
-          setGenError(
-            `Reference image "${check.filename}" has an unsupported aspect ratio ` +
-            `(${check.ratio.toFixed(2)} — must be between 0.4 and 2.5). ` +
-            `Please remove it from the slot and upload a portrait or square image instead.`
-          );
-          return;
-        }
-      }
-
       const res = await fetch("/api/generate-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
