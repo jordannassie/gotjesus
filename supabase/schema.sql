@@ -121,3 +121,34 @@ create index if not exists gotjesus_reels_created_at_idx
 create index if not exists gotjesus_reels_scheduled_for_idx
   on gotjesus_reels (generation_source, scheduled_for)
   where generation_source = 'scheduled';
+
+-- ─── Brand / workspace settings ────────────────────────────────────────────────
+-- Stores per-workspace brand configuration: banner image, future brand assets.
+-- Currently a single-row table (workspace_key = 'gotjesus').
+-- Designed to evolve into multi-company brand settings when workspace login is
+-- added — workspace_key will map to a company/user account.
+
+create table if not exists gotjesus_brand_settings (
+  id                uuid        primary key default gen_random_uuid(),
+  created_at        timestamptz not null    default now(),
+  updated_at        timestamptz not null    default now(),
+  workspace_key     text        not null    unique default 'gotjesus',
+  banner_image_url  text,
+  banner_image_path text
+);
+
+alter table gotjesus_brand_settings enable row level security;
+
+-- Permissive service-role policies (access via service role key only,
+-- matching the pattern used for gotjesus_reels).
+create policy "service role select brand settings"
+  on gotjesus_brand_settings for select using (true);
+
+create policy "service role insert brand settings"
+  on gotjesus_brand_settings for insert with check (true);
+
+create policy "service role update brand settings"
+  on gotjesus_brand_settings for update using (true);
+
+create policy "service role delete brand settings"
+  on gotjesus_brand_settings for delete using (true);

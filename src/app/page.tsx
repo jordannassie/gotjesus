@@ -1,17 +1,18 @@
 import Image from "next/image";
 import VideoEngine from "@/components/VideoEngine";
+import BannerImageEditor from "@/components/BannerImageEditor";
 import { isBlotatoConnected } from "@/lib/blotato";
 import { CROSS_DISCOVERY_PROMPT, CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
 import { getPostingSettings } from "@/lib/posting-settings";
+import { getBrandSettings } from "@/lib/brand-settings";
 
 export default async function Home() {
   // All env/server logic runs here — nothing secret leaks to the client bundle
   const blotatoConnected = isBlotatoConnected();
   const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
   const initialSettings = await getPostingSettings();
-
-  const heroImage =
-    "https://phhczohqidgrvcmszets.supabase.co/storage/v1/object/public/GOT%20JESUS/image/89D706C1-5DDB-423C-A225-63645A926841.jpg";
+  const brandSettings = await getBrandSettings("gotjesus");
+  const heroImage = brandSettings.bannerImageUrl;
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white flex flex-col">
@@ -86,6 +87,9 @@ export default async function Home() {
                   "linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.55) 55%, rgba(10,10,10,0.96) 100%)",
               }}
             />
+            {/* Update Banner control — top-right corner */}
+            <BannerImageEditor initialBannerUrl={heroImage} />
+
             <div className="absolute bottom-0 left-0 right-0 px-6 pb-7 flex flex-col gap-2">
               <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white drop-shadow-lg leading-tight">
                 Create Automated GotJesus Reels
