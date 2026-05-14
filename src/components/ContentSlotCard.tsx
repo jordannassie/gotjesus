@@ -253,9 +253,44 @@ export default function ContentSlotCard({
     genStatus === "saving" ? "Saving…" : "";
 
   return (
-    <div className="w-full border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
+    <div
+      className="w-full rounded-2xl bg-neutral-950 overflow-hidden transition-all duration-500 relative"
+      style={{
+        border: genRunning
+          ? "1px solid transparent"
+          : "1px solid rgb(38 38 38)",
+        backgroundImage: genRunning
+          ? "linear-gradient(#050505, #050505), linear-gradient(135deg, #a3e635, #22d3ee, #a855f7, #a3e635)"
+          : undefined,
+        backgroundOrigin: genRunning ? "border-box" : undefined,
+        backgroundClip: genRunning ? "padding-box, border-box" : undefined,
+        boxShadow: genRunning
+          ? "0 0 40px #22d3ee44, 0 0 80px #a3e63530, 0 0 12px #a855f730"
+          : undefined,
+      }}
+    >
+      {/* Large neon percent overlay — top-right corner during generation */}
+      {genRunning && genProgress > 0 && (
+        <div
+          className="absolute top-3 right-4 z-10 tabular-nums font-black leading-none pointer-events-none select-none"
+          style={{
+            fontSize: "clamp(2.5rem, 6vw, 4rem)",
+            background: genStatus === "done"
+              ? "linear-gradient(135deg, #4ade80, #22d3ee)"
+              : "linear-gradient(135deg, #a3e635, #22d3ee, #a855f7)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            backgroundClip: "text",
+            filter: "drop-shadow(0 0 12px #22d3ee99)",
+            letterSpacing: "-0.04em",
+          }}
+        >
+          {Math.round(genProgress)}%
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex flex-col gap-2 px-5 py-3.5 border-b border-neutral-800 bg-neutral-900/40">
+      <div className="flex flex-col gap-2 px-5 py-3.5 border-b border-neutral-800 bg-neutral-900/40 relative">
         <div className="flex items-center gap-3">
           <input
             type="text"
@@ -477,17 +512,13 @@ export default function ContentSlotCard({
                 }}
               />
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center">
               <span className="text-[10px] font-medium tracking-wide uppercase"
                 style={{ color: genStatus === "done" ? "#4ade80" : "#22d3ee" }}>
                 {genStatus === "submitting" && (genProgress < 5 ? "Starting generation…" : "Sending prompt and images…")}
                 {genStatus === "generating" && (genProgress < 80 ? "Generating video…" : "Finalizing GotJesus end card…")}
                 {genStatus === "saving" && "Saving to Library…"}
-                {genStatus === "done" && "Complete"}
-              </span>
-              <span className="text-[10px] font-semibold tabular-nums"
-                style={{ color: genStatus === "done" ? "#4ade80" : "#a3e635" }}>
-                {Math.round(genProgress)}%
+                {genStatus === "done" && "Complete ✓"}
               </span>
             </div>
           </div>
