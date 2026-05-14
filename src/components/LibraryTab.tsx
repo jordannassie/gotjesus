@@ -68,6 +68,7 @@ function ReelLibraryCard({
   const manuallyPlaying = useRef(false);
   const [showControls, setShowControls] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
   const [postNowStatus, setPostNowStatus] = useState<PostNowStatus>("idle");
   const [postNowLabel, setPostNowLabel] = useState("");
   const postNowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,6 +198,7 @@ function ReelLibraryCard({
             loop
             controls={showControls}
             preload="metadata"
+            onLoadedData={() => setVideoReady(true)}
             className="absolute inset-0 w-full h-full object-contain"
           />
         ) : (
@@ -204,8 +206,36 @@ function ReelLibraryCard({
             <span className="text-xs text-neutral-600">No video</span>
           </div>
         )}
+        {/* Neon preloader — shown until video metadata is ready */}
+        {videoUrl && !videoReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+            <div className="relative w-10 h-10">
+              <div
+                className="absolute inset-0 rounded-full animate-spin"
+                style={{
+                  border: "2px solid transparent",
+                  borderTopColor: "#a3e635",
+                  borderRightColor: "#22d3ee",
+                  filter: "drop-shadow(0 0 4px #22d3ee) drop-shadow(0 0 8px #a3e635)",
+                  animationDuration: "0.9s",
+                }}
+              />
+              <div
+                className="absolute inset-1.5 rounded-full animate-spin"
+                style={{
+                  border: "2px solid transparent",
+                  borderBottomColor: "#a855f7",
+                  borderLeftColor: "#22d3ee",
+                  filter: "drop-shadow(0 0 4px #a855f7)",
+                  animationDuration: "0.6s",
+                  animationDirection: "reverse",
+                }}
+              />
+            </div>
+          </div>
+        )}
         {/* Play overlay */}
-        {!isPlaying && videoUrl && (
+        {!isPlaying && videoUrl && videoReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/30 transition-opacity">
             <svg className="w-8 h-8 text-white/70" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
@@ -496,24 +526,30 @@ export default function LibraryTab() {
       {/* Grid */}
       {loading && reels.length === 0 ? (
         <div className="py-20 flex flex-col items-center justify-center gap-3">
-          <svg
-            className="w-9 h-9 animate-spin text-neutral-600"
-            viewBox="0 0 24 24"
-            fill="none"
-          >
-            <circle
-              className="opacity-20"
-              cx="12" cy="12" r="10"
-              stroke="currentColor"
-              strokeWidth="3"
+          <div className="relative w-10 h-10">
+            <div
+              className="absolute inset-0 rounded-full animate-spin"
+              style={{
+                border: "2.5px solid transparent",
+                borderTopColor: "#a3e635",
+                borderRightColor: "#22d3ee",
+                filter: "drop-shadow(0 0 6px #22d3ee) drop-shadow(0 0 10px #a3e635)",
+                animationDuration: "0.9s",
+              }}
             />
-            <path
-              className="opacity-80"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            <div
+              className="absolute inset-2 rounded-full animate-spin"
+              style={{
+                border: "2px solid transparent",
+                borderBottomColor: "#a855f7",
+                borderLeftColor: "#22d3ee",
+                filter: "drop-shadow(0 0 5px #a855f7)",
+                animationDuration: "0.6s",
+                animationDirection: "reverse",
+              }}
             />
-          </svg>
-          <span className="text-xs text-neutral-600 tracking-wide">Loading library…</span>
+          </div>
+          <span className="text-xs tracking-wide" style={{ color: "#22d3ee99" }}>Loading library…</span>
         </div>
       ) : filtered.length === 0 ? (
         <div className="py-16 text-center">

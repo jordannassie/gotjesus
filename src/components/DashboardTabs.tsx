@@ -46,11 +46,30 @@ const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
 function PageSpinner() {
   return (
     <div className="py-20 flex flex-col items-center justify-center gap-3">
-      <svg className="w-9 h-9 animate-spin text-neutral-600" viewBox="0 0 24 24" fill="none">
-        <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-        <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
-      <span className="text-xs text-neutral-600 tracking-wide">Loading…</span>
+      <div className="relative w-10 h-10">
+        <div
+          className="absolute inset-0 rounded-full animate-spin"
+          style={{
+            border: "2.5px solid transparent",
+            borderTopColor: "#a3e635",
+            borderRightColor: "#22d3ee",
+            filter: "drop-shadow(0 0 6px #22d3ee) drop-shadow(0 0 10px #a3e635)",
+            animationDuration: "0.9s",
+          }}
+        />
+        <div
+          className="absolute inset-2 rounded-full animate-spin"
+          style={{
+            border: "2px solid transparent",
+            borderBottomColor: "#a855f7",
+            borderLeftColor: "#22d3ee",
+            filter: "drop-shadow(0 0 5px #a855f7)",
+            animationDuration: "0.6s",
+            animationDirection: "reverse",
+          }}
+        />
+      </div>
+      <span className="text-xs tracking-wide" style={{ color: "#22d3ee99" }}>Loading…</span>
     </div>
   );
 }

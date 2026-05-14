@@ -49,8 +49,14 @@ export default async function Home() {
               </span>
             </div>
             <div className="flex items-center gap-2.5 bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-neutral-600 to-neutral-800 border border-neutral-700 flex items-center justify-center flex-shrink-0">
-                <span className="text-[11px] font-bold text-white tracking-wide select-none">GJ</span>
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{
+                  background: "linear-gradient(135deg, #a3e635, #22d3ee, #a855f7)",
+                  boxShadow: "0 0 10px #22d3ee55, 0 0 4px #a3e63544",
+                }}
+              >
+                <span className="text-[11px] font-bold text-black tracking-wide select-none">GJ</span>
               </div>
               <div className="flex flex-col gap-0">
                 <span className="text-xs font-semibold text-white leading-tight">GotJesus Admin</span>

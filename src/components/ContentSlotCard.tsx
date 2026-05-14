@@ -364,7 +364,7 @@ export default function ContentSlotCard({
             disabled={uploadingImage}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-neutral-700 text-[11px] text-neutral-500 hover:text-neutral-300 hover:border-neutral-500 transition-colors disabled:opacity-50"
           >
-            {uploadingImage ? <span className="w-2.5 h-2.5 border border-neutral-600 border-t-white rounded-full animate-spin inline-block" /> : "+"}
+            {uploadingImage ? <span className="w-2.5 h-2.5 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee22", borderTopColor: "#a3e635" }} /> : "+"}
             {uploadingImage ? "Uploading…" : "Add Image"}
           </button>
           {uploadError && <span className="text-[11px] text-red-400">{uploadError}</span>}
@@ -465,22 +465,28 @@ export default function ContentSlotCard({
           <div className="flex flex-col gap-1.5">
             <div className="w-full h-1.5 rounded-full bg-neutral-800 overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ease-out ${
-                  genStatus === "done" ? "bg-emerald-500" : "bg-white"
-                }`}
-                style={{ width: `${genProgress}%` }}
+                className="h-full rounded-full transition-all duration-500 ease-out"
+                style={{
+                  width: `${genProgress}%`,
+                  background: genStatus === "done"
+                    ? "linear-gradient(90deg, #4ade80, #22d3ee)"
+                    : "linear-gradient(90deg, #a3e635, #22d3ee, #a855f7)",
+                  boxShadow: genStatus === "done"
+                    ? "0 0 8px #4ade8088"
+                    : "0 0 10px #22d3ee66, 0 0 4px #a3e63566",
+                }}
               />
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-neutral-500 font-medium tracking-wide uppercase">
+              <span className="text-[10px] font-medium tracking-wide uppercase"
+                style={{ color: genStatus === "done" ? "#4ade80" : "#22d3ee" }}>
                 {genStatus === "submitting" && (genProgress < 5 ? "Starting generation…" : "Sending prompt and images…")}
                 {genStatus === "generating" && (genProgress < 80 ? "Generating video…" : "Finalizing GotJesus end card…")}
                 {genStatus === "saving" && "Saving to Library…"}
                 {genStatus === "done" && "Complete"}
               </span>
-              <span className={`text-[10px] font-semibold tabular-nums ${
-                genStatus === "done" ? "text-emerald-400" : "text-neutral-400"
-              }`}>
+              <span className="text-[10px] font-semibold tabular-nums"
+                style={{ color: genStatus === "done" ? "#4ade80" : "#a3e635" }}>
                 {Math.round(genProgress)}%
               </span>
             </div>
@@ -496,7 +502,7 @@ export default function ContentSlotCard({
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-700 bg-neutral-900 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {genRunning ? (
-              <><span className="w-3 h-3 border border-neutral-600 border-t-white rounded-full animate-spin inline-block" />{genLabel || "In progress…"}</>
+              <><span className="w-3 h-3 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee44", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />{genLabel || "In progress…"}</>
             ) : (
               <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>Generate Test</>
             )}
