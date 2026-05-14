@@ -228,13 +228,14 @@ interface ContentSlotRow {
   scheduled_post_time: string;
   resolution: string;
   duration_seconds: number;
+  aspect_ratio: string;
   sort_order: number;
 }
 
 async function getEnabledContentSlots(supabase: SupabaseClient): Promise<ContentSlotRow[]> {
   const { data, error } = await supabase
     .from("gotjesus_content_slots")
-    .select("id, slot_key, slot_name, prompt_text, reference_images, enabled, scheduled_post_time, resolution, duration_seconds, sort_order")
+    .select("id, slot_key, slot_name, prompt_text, reference_images, enabled, scheduled_post_time, resolution, duration_seconds, aspect_ratio, sort_order")
     .eq("workspace_key", "gotjesus")
     .eq("enabled", true)
     .order("sort_order", { ascending: true });
@@ -291,15 +292,30 @@ async function updateReelRow(
 
 // ─── Kie.ai helpers (inlined) ─────────────────────────────────────────────────
 
+/**
+ * Converts a "W:H" string to the numeric float Kie.ai requires.
+ * e.g. "9:16" → 0.5625, "16:9" → 1.7778, "1:1" → 1.0
+ */
+function aspectRatioToFloat(ar: string): number {
+  if (ar.includes(":")) {
+    const [w, h] = ar.split(":").map(Number);
+    return w / h;
+  }
+  return parseFloat(ar);
+}
+
 async function submitKieJob(
   prompt: string,
   slotImageUrls: string[] = [],
   resolution?: string,
-  durationSeconds?: number
+  durationSeconds?: number,
+  aspectRatioStr?: string
 ): Promise<string> {
   const endCardUrl = process.env.GOT_JESUS_ENDCARD_SUPABASE_URL;
   // Slot images first, end card always last so Seedance anchors the branded ending
   const allRefs = [...slotImageUrls, ...(endCardUrl ? [endCardUrl] : [])];
+  // Kie.ai requires a numeric float (0.4–2.5 range), not the "9:16" string format
+  const aspectRatioFloat = aspectRatioToFloat(aspectRatioStr ?? "9:16");
   const res = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
     method: "POST",
     headers: {
@@ -310,7 +326,7 @@ async function submitKieJob(
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: "9:16",
+        aspect_ratio: aspectRatioFloat,
         resolution: resolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p",
         duration: durationSeconds ?? 8,
         generate_audio: true,
@@ -520,6 +536,7 @@ const handler: Handler = async () => {
     imageUrls: (s.reference_images ?? []).map((img) => img.url),
     resolution: s.resolution || "480p",
     durationSeconds: s.duration_seconds || 8,
+    aspectRatio: s.aspect_ratio || "9:16",
     slotKey: s.slot_key,
   }));
 
@@ -531,7 +548,7 @@ const handler: Handler = async () => {
     "\n\nThe reference image provided is the exact Got Jesus logo end card. Use it precisely and faithfully for the final 1-second branded end card described above: centered white logo on clean black, sharp and undistorted.";
 
   for (const slotInfo of slotsToProcess) {
-    const { timeHHMM, promptText, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
+    const { timeHHMM, promptText, imageUrls, resolution, durationSeconds, aspectRatio, slotKey } = slotInfo;
     const scheduledForISO = pacificTimeToUTCISO(timeHHMM);
     console.log(`[scheduler] Slot ${slotKey} ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
 
@@ -552,7 +569,7 @@ const handler: Handler = async () => {
       console.log(`[prompt] version=${PROMPT_VERSION} source=scheduled slot=${slotKey}`);
       console.log(`[scheduler] Submitting Kie job for reel ${reelId}`);
       const fullPrompt = promptText + NATIVE_ENDING_SUFFIX;
-      const taskId = await submitKieJob(fullPrompt, imageUrls, resolution, durationSeconds);
+      const taskId = await submitKieJob(fullPrompt, imageUrls, resolution, durationSeconds, aspectRatio);
       await updateReelRow(supabase, reelId, {
         kie_task_id: taskId,
         prompt_used: `[${slotKey}] ${promptText.slice(0, 200)}`,

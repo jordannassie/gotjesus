@@ -9,6 +9,24 @@ import {
 const KIE_BASE_URL = "https://api.kie.ai";
 
 /**
+ * Converts a human-readable aspect ratio string to the numeric float that the
+ * Kie.ai / Seedance API requires (it validates the value is between 0.4 and 2.5).
+ *
+ *   "9:16"  → 0.5625
+ *   "16:9"  → 1.7778
+ *   "1:1"   → 1.0
+ *
+ * If the string is already numeric (no colon), parseFloat is used as a fallback.
+ */
+function aspectRatioToFloat(ar: string): number {
+  if (ar.includes(":")) {
+    const [w, h] = ar.split(":").map(Number);
+    return w / h;
+  }
+  return parseFloat(ar);
+}
+
+/**
  * Submits a Kie.ai job with explicit reference images.
  * Used when generating from a content slot that has its own prompt and images.
  * The end card URL is always appended so the branded ending is preserved.
@@ -37,7 +55,7 @@ async function submitKieJobWithImages(
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: aspectRatio,
+        aspect_ratio: aspectRatioToFloat(aspectRatio),
         resolution,
         duration,
         generate_audio: true,

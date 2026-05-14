@@ -88,7 +88,7 @@ export async function createVideoTask(prompt: string): Promise<string> {
       model: "bytedance/seedance-2-fast",
       input: {
         prompt,
-        aspect_ratio: "9:16",
+        aspect_ratio: 9 / 16, // Kie.ai requires a numeric float (0.5625), not the string "9:16"
         resolution: process.env.KIE_VIDEO_RESOLUTION || "480p",
         duration: 8,
         generate_audio: true,
