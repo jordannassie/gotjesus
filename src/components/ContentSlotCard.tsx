@@ -43,6 +43,7 @@ export default function ContentSlotCard({
   const [images, setImages] = useState(slot.referenceImages);
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [promptCopied, setPromptCopied] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadError, setUploadError] = useState("");
@@ -370,13 +371,37 @@ export default function ContentSlotCard({
         </div>
 
         {/* Compact prompt textarea */}
-        <textarea
-          value={promptText}
-          onChange={(e) => setPromptText(e.target.value)}
-          placeholder="Describe your scene in detail. Use @ to reference attached images."
-          className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors leading-relaxed overflow-y-auto"
-          style={{ height: "130px" }}
-        />
+        <div className="relative">
+          <textarea
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+            placeholder="Describe your scene in detail. Use @ to reference attached images."
+            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 pr-9 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors leading-relaxed overflow-y-auto"
+            style={{ height: "130px" }}
+          />
+          <button
+            type="button"
+            title="Copy prompt text"
+            onClick={() => {
+              void navigator.clipboard.writeText(promptText).then(() => {
+                setPromptCopied(true);
+                setTimeout(() => setPromptCopied(false), 2000);
+              });
+            }}
+            className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-md border border-neutral-700 text-neutral-600 hover:text-neutral-300 hover:border-neutral-500 bg-neutral-900 transition-colors"
+          >
+            {promptCopied ? (
+              <svg className="w-3 h-3 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+            ) : (
+              <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+              </svg>
+            )}
+          </button>
+        </div>
 
         {/* Post Caption */}
         <div className="flex flex-col gap-1">
