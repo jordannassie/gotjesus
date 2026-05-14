@@ -2,8 +2,6 @@ import Image from "next/image";
 import BannerImageEditor from "@/components/BannerImageEditor";
 import DashboardTabs from "@/components/DashboardTabs";
 import { isBlotatoConnected } from "@/lib/blotato";
-import { CROSS_DISCOVERY_PROMPT, CROSS_DISCOVERY_PROMPT_SUMMARY } from "@/lib/cross-prompt";
-import { getPostingSettings } from "@/lib/posting-settings";
 import { getBrandSettings } from "@/lib/brand-settings";
 import { getContentSlots, seedDefaultContentSlotsIfMissing } from "@/lib/content-slots";
 
@@ -14,8 +12,6 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const blotatoConnected = isBlotatoConnected();
-  const resolution = process.env.KIE_VIDEO_RESOLUTION || "480p";
-  const initialSettings = await getPostingSettings();
   const brandSettings = await getBrandSettings("gotjesus");
   const heroImage = brandSettings.bannerImageUrl;
   await seedDefaultContentSlotsIfMissing("gotjesus");
@@ -123,10 +119,6 @@ export default async function Home() {
           <DashboardTabs
             contentSlots={contentSlots}
             blotatoConnected={blotatoConnected}
-            promptSummary={CROSS_DISCOVERY_PROMPT_SUMMARY}
-            fullPrompt={CROSS_DISCOVERY_PROMPT}
-            resolution={resolution}
-            initialSettings={initialSettings}
           />
         </div>
 

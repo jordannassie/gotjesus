@@ -1,14 +1,7 @@
 "use client";
 
-import VideoEngine from "@/components/VideoEngine";
-import type { PostingSettings } from "@/lib/posting-settings";
-
 interface Props {
   blotatoConnected: boolean;
-  promptSummary: string;
-  fullPrompt: string;
-  resolution: string;
-  initialSettings: PostingSettings;
 }
 
 function StatusRow({
@@ -24,7 +17,12 @@ function StatusRow({
     status === "connected" || status === "active"
       ? "bg-emerald-500"
       : "bg-red-500";
-  const text = status === "connected" ? "Connected" : status === "active" ? "Active" : "Not connected";
+  const text =
+    status === "connected"
+      ? "Connected"
+      : status === "active"
+      ? "Active"
+      : "Not connected";
 
   return (
     <div className="flex items-center justify-between py-3 border-b border-neutral-800 last:border-b-0">
@@ -34,7 +32,11 @@ function StatusRow({
       </div>
       <div className="flex items-center gap-1.5">
         <span className={`inline-block w-2 h-2 rounded-full ${dot}`} />
-        <span className={`text-xs font-medium ${status !== "disconnected" ? "text-emerald-400" : "text-red-400"}`}>
+        <span
+          className={`text-xs font-medium ${
+            status !== "disconnected" ? "text-emerald-400" : "text-red-400"
+          }`}
+        >
           {text}
         </span>
       </div>
@@ -42,24 +44,16 @@ function StatusRow({
   );
 }
 
-export default function ConnectionsTab({
-  blotatoConnected,
-  promptSummary,
-  fullPrompt,
-  resolution,
-  initialSettings,
-}: Props) {
-  const kieConfigured = typeof process !== "undefined"
-    ? true
-    : false;
-
+export default function ConnectionsTab({ blotatoConnected }: Props) {
   return (
     <div className="flex flex-col gap-6">
       {/* Generation Stack */}
       <div className="border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
         <div className="px-5 py-4 border-b border-neutral-800">
           <h3 className="text-sm font-semibold text-white">Generation Stack</h3>
-          <p className="text-xs text-neutral-500 mt-0.5">AI video generation and asset pipeline</p>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            AI video generation and asset pipeline
+          </p>
         </div>
         <div className="px-5">
           <StatusRow
@@ -69,7 +63,7 @@ export default function ConnectionsTab({
           />
           <StatusRow
             label="GotJesus Branded Ending"
-            sublabel="End card appended to every reel via reference image"
+            sublabel="End card appended to every reel via reference_image_urls"
             status="active"
           />
           <StatusRow
@@ -84,7 +78,9 @@ export default function ConnectionsTab({
       <div className="border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
         <div className="px-5 py-4 border-b border-neutral-800">
           <h3 className="text-sm font-semibold text-white">Social Publishing</h3>
-          <p className="text-xs text-neutral-500 mt-0.5">Blotato distributes reels to connected platforms</p>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Blotato distributes reels to connected platforms
+          </p>
         </div>
         <div className="px-5">
           <StatusRow
@@ -95,23 +91,19 @@ export default function ConnectionsTab({
         </div>
       </div>
 
-      {/* Automation + Manual Generate */}
-      <div className="border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
-        <div className="px-5 py-4 border-b border-neutral-800">
-          <h3 className="text-sm font-semibold text-white">Automation &amp; Manual Generate</h3>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Daily schedule is controlled per-slot in the Content Engine tab. Use the panel below to manually trigger a reel.
-          </p>
-        </div>
-        <div className="px-5 py-5">
-          <VideoEngine
-            blotatoConnected={blotatoConnected}
-            promptSummary={promptSummary}
-            fullPrompt={fullPrompt}
-            resolution={resolution}
-            initialSettings={initialSettings}
-          />
-        </div>
+      {/* Info note */}
+      <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 px-5 py-4">
+        <p className="text-xs text-neutral-500 leading-relaxed">
+          <span className="text-neutral-300 font-medium">Scheduling note:</span>{" "}
+          Daily automation is fully slot-based. Each slot in the{" "}
+          <span className="text-neutral-300">Content Engine</span> tab has its own
+          scheduled time, prompt, and reference images.{" "}
+          <code className="text-neutral-400 bg-neutral-800 px-1 py-0.5 rounded text-[10px]">
+            gotjesus_content_slots
+          </code>{" "}
+          is the only source of truth for automation schedules — there is no legacy
+          global posting_times fallback.
+        </p>
       </div>
     </div>
   );

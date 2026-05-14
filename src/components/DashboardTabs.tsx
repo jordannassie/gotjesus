@@ -5,17 +5,12 @@ import DailyContentEngine from "@/components/DailyContentEngine";
 import LibraryTab from "@/components/LibraryTab";
 import ConnectionsTab from "@/components/ConnectionsTab";
 import type { ContentSlot } from "@/lib/content-slots";
-import type { PostingSettings } from "@/lib/posting-settings";
 
 type Tab = "engine" | "library" | "connections";
 
 interface Props {
   contentSlots: ContentSlot[];
   blotatoConnected: boolean;
-  promptSummary: string;
-  fullPrompt: string;
-  resolution: string;
-  initialSettings: PostingSettings;
 }
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -48,14 +43,7 @@ const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-export default function DashboardTabs({
-  contentSlots,
-  blotatoConnected,
-  promptSummary,
-  fullPrompt,
-  resolution,
-  initialSettings,
-}: Props) {
+export default function DashboardTabs({ contentSlots, blotatoConnected }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("engine");
 
   return (
@@ -88,13 +76,7 @@ export default function DashboardTabs({
           <LibraryTab />
         )}
         {activeTab === "connections" && (
-          <ConnectionsTab
-            blotatoConnected={blotatoConnected}
-            promptSummary={promptSummary}
-            fullPrompt={fullPrompt}
-            resolution={resolution}
-            initialSettings={initialSettings}
-          />
+          <ConnectionsTab blotatoConnected={blotatoConnected} />
         )}
       </div>
     </div>

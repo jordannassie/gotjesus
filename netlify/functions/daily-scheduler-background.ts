@@ -2,21 +2,29 @@
  * Netlify Scheduled Background Function — daily-scheduler-background
  *
  * Runs every day at 13:00 UTC (= 5 AM PST / 6 AM PDT).
- * For each posting slot configured in gotjesus_posting_settings:
- *   1. Check for duplicate — skip if a scheduled reel already exists for this slot.
+ *
+ * Scheduling is fully slot-based. gotjesus_content_slots is the ONLY source of
+ * truth for prompts, scheduled times, reference images, and generation settings.
+ * There is NO legacy posting_times / posts_per_day fallback — that path has
+ * been removed. If there are no enabled slots, the scheduler exits cleanly.
+ *
+ * For each enabled content slot whose scheduled_post_time matches today:
+ *   1. Check for duplicate — skip if a scheduled reel already exists within ±5 min.
  *   2. Create a gotjesus_reels row (status="generating", source="scheduled").
- *   3. Submit a Kie.ai Seedance 2.0 job for the branded 8-second reel.
+ *   3. Submit a Kie.ai Seedance 2.0 job using the slot's prompt + reference images.
  *   4. Poll Kie until the video is ready (up to ~10 minutes).
  *   5. Download + upload video to Supabase Storage.
- *   6. Publish to Blotato with scheduledTime = the Pacific posting slot in UTC.
+ *   6. Publish to Blotato with scheduledTime = the slot's Pacific time in UTC.
  *   7. Update the DB row with Blotato submission IDs and status="scheduled".
+ *
+ * gotjesus_posting_settings.auto_post_enabled acts as a global master ON/OFF gate.
+ * Platform toggles (instagram_enabled, tiktok_enabled, youtube_enabled) in that
+ * table control which platforms receive posts.
  *
  * All helpers are inlined because Netlify background functions are bundled
  * separately and cannot resolve @/ path aliases.
  *
  * Max runtime: 15 minutes (Netlify background function limit).
- * With 5 posts/day at ~3 minutes each, 5 posts should complete in ~15 min.
- * If you need more posts, split across two scheduler runs.
  */
 
 import type { Handler } from "@netlify/functions";
@@ -198,7 +206,7 @@ function getSupabase(): SupabaseClient {
 async function getPostingSettings(supabase: SupabaseClient) {
   const { data } = await supabase
     .from("gotjesus_posting_settings")
-    .select("*")
+    .select("auto_post_enabled, instagram_enabled, tiktok_enabled, youtube_enabled")
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -207,8 +215,6 @@ async function getPostingSettings(supabase: SupabaseClient) {
     instagram_enabled: boolean;
     tiktok_enabled: boolean;
     youtube_enabled: boolean;
-    posts_per_day: number;
-    posting_times: string[];
   } | null;
 }
 
@@ -498,38 +504,24 @@ const handler: Handler = async () => {
     return { statusCode: 200, body: "no platforms" };
   }
 
-  // Load content slots from DB (slot-based scheduling)
+  // Load enabled content slots — the ONLY source of schedule/prompt/image data.
+  // No legacy posting_times / posts_per_day fallback exists.
   const contentSlots = await getEnabledContentSlots(supabase);
   console.log(`[scheduler] Found ${contentSlots.length} enabled content slot(s)`);
 
-  // Fallback: if no content slots exist yet, use posting_times from settings
-  // with the canonical CROSS_DISCOVERY_PROMPT (backward compatibility)
-  const slotsToProcess: Array<{
-    timeHHMM: string;
-    promptText: string;
-    imageUrls: string[];
-    resolution: string;
-    durationSeconds: number;
-    slotKey: string;
-  }> = contentSlots.length > 0
-    ? contentSlots.map((s) => ({
-        timeHHMM: s.scheduled_post_time,
-        promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
-        imageUrls: (s.reference_images ?? []).map((img) => img.url),
-        resolution: s.resolution || "480p",
-        durationSeconds: s.duration_seconds || 8,
-        slotKey: s.slot_key,
-      }))
-    : (settings.posting_times ?? [])
-        .slice(0, settings.posts_per_day ?? 1)
-        .map((t, i) => ({
-          timeHHMM: t,
-          promptText: CROSS_DISCOVERY_PROMPT,
-          imageUrls: [],
-          resolution: process.env.KIE_VIDEO_RESOLUTION ?? "480p",
-          durationSeconds: 8,
-          slotKey: `fallback_${i + 1}`,
-        }));
+  if (contentSlots.length === 0) {
+    console.log("[scheduler] No enabled content slots. Exiting.");
+    return { statusCode: 200, body: "no enabled content slots" };
+  }
+
+  const slotsToProcess = contentSlots.map((s) => ({
+    timeHHMM: s.scheduled_post_time,
+    promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
+    imageUrls: (s.reference_images ?? []).map((img) => img.url),
+    resolution: s.resolution || "480p",
+    durationSeconds: s.duration_seconds || 8,
+    slotKey: s.slot_key,
+  }));
 
   console.log(
     `[scheduler] Processing ${slotsToProcess.length} slot(s): ${slotsToProcess.map((s) => `${s.slotKey}@${s.timeHHMM}`).join(", ")}`
