@@ -192,6 +192,31 @@ function pacificTimeToUTCISO(timeHHMM: string): string {
   return new Date(Date.UTC(year, month - 1, day, h + 8, m, 0)).toISOString();
 }
 
+/**
+ * Returns true if the slot's scheduled_post_time (HH:MM Pacific) falls within
+ * the 30-minute window starting at the current Pacific time.
+ * E.g. if it's 7:03 AM Pacific, any slot between 7:00–7:29 matches.
+ */
+function slotIsInCurrentWindow(timeHHMM: string): boolean {
+  const tz = "America/Los_Angeles";
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const nowH = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
+  const nowM = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
+  const nowTotal = nowH * 60 + nowM;
+
+  const [slotH, slotM] = timeHHMM.split(":").map(Number);
+  const slotTotal = slotH * 60 + slotM;
+
+  // Match if slot time is within [nowTotal, nowTotal + 30)
+  return slotTotal >= nowTotal && slotTotal < nowTotal + 30;
+}
+
 // ─── Supabase helpers (inlined) ───────────────────────────────────────────────
 
 function getSupabase(): SupabaseClient {
@@ -477,12 +502,12 @@ function buildBlotatoTarget(platform: Platform): Record<string, unknown> {
 async function blotatoPublish(
   videoUrl: string,
   platform: Platform,
-  scheduledTime: string,
   caption: string
 ): Promise<string> {
   const accountId = getAccountId(platform);
   if (!accountId) throw new Error(`No Blotato account ID for ${platform}`);
 
+  // No scheduledTime — post immediately when the video is ready.
   const body: Record<string, unknown> = {
     post: {
       accountId,
@@ -493,7 +518,6 @@ async function blotatoPublish(
       },
       target: buildBlotatoTarget(platform),
     },
-    scheduledTime, // top-level, NOT nested inside post
   };
 
   const res = await fetch(`${BLOTATO_BASE_URL}/v2/posts`, {
@@ -544,18 +568,27 @@ const handler: Handler = async () => {
     return { statusCode: 200, body: "no enabled content slots" };
   }
 
-  const slotsToProcess = contentSlots.map((s) => ({
-    timeHHMM: s.scheduled_post_time,
-    promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
-    caption: s.post_caption || GOT_JESUS_CAPTION,
-    imageUrls: (s.reference_images ?? []).map((img) => img.url),
-    resolution: s.resolution || "480p",
-    durationSeconds: s.duration_seconds || 8,
-    slotKey: s.slot_key,
-  }));
+  // Only process slots whose scheduled time falls in the current 30-minute window.
+  // The cron fires every 30 min, so each slot is picked up exactly when it's due.
+  const slotsToProcess = contentSlots
+    .filter((s) => slotIsInCurrentWindow(s.scheduled_post_time))
+    .map((s) => ({
+      timeHHMM: s.scheduled_post_time,
+      promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
+      caption: s.post_caption || GOT_JESUS_CAPTION,
+      imageUrls: (s.reference_images ?? []).map((img) => img.url),
+      resolution: s.resolution || "480p",
+      durationSeconds: s.duration_seconds || 8,
+      slotKey: s.slot_key,
+    }));
+
+  if (slotsToProcess.length === 0) {
+    console.log("[scheduler] No slots due in the current 30-minute window. Exiting.");
+    return { statusCode: 200, body: "no slots due" };
+  }
 
   console.log(
-    `[scheduler] Processing ${slotsToProcess.length} slot(s): ${slotsToProcess.map((s) => `${s.slotKey}@${s.timeHHMM}`).join(", ")}`
+    `[scheduler] Processing ${slotsToProcess.length} slot(s) due now: ${slotsToProcess.map((s) => `${s.slotKey}@${s.timeHHMM}`).join(", ")}`
   );
 
   const NATIVE_ENDING_SUFFIX =
@@ -601,27 +634,27 @@ const handler: Handler = async () => {
       const savedVideoUrl = await downloadAndUpload(kieVideoUrl, reelId);
       await updateReelRow(supabase, reelId, { saved_video_url: savedVideoUrl, status: "posting" });
 
-      // Post to Blotato with scheduled time
+      // Post immediately to all enabled platforms
       const submissionIds: Record<string, string> = {};
       for (const platform of enabledPlatforms) {
         try {
-          const id = await blotatoPublish(savedVideoUrl, platform, scheduledForISO, caption);
+          const id = await blotatoPublish(savedVideoUrl, platform, caption);
           submissionIds[platform] = id;
-          console.log(`[scheduler] Scheduled to ${platform}: ${id}`);
+          console.log(`[scheduler] Posted to ${platform}: ${id}`);
         } catch (err) {
-          console.error(`[scheduler] Failed to schedule to ${platform}:`, err);
+          console.error(`[scheduler] Failed to post to ${platform}:`, err);
         }
       }
 
       await updateReelRow(supabase, reelId, {
-        status: "scheduled",
+        status: "posted",
         blotato_status: "submitted",
         posting_source: "auto",
         instagram_post_submission_id: submissionIds.instagram ?? null,
         tiktok_post_submission_id: submissionIds.tiktok ?? null,
         youtube_post_submission_id: submissionIds.youtube ?? null,
       });
-      console.log(`[scheduler] Reel ${reelId} scheduled for ${scheduledForISO}`);
+      console.log(`[scheduler] Reel ${reelId} posted immediately for slot ${slotKey}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[scheduler] Reel ${reelId} failed:`, message);

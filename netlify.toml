@@ -15,11 +15,11 @@
   # No external_node_modules needed — @supabase/supabase-js is bundled normally.
 
 # ── Scheduled Background Function: daily-scheduler-background ─────────────────
-# Runs at 13:00 UTC every day (= 5 AM PST / 6 AM PDT).
-# Generates branded reels for each posting slot and schedules them in Blotato.
+# Runs every 30 minutes. Checks which content slots are due in the current
+# 30-minute window, generates the video, then posts it immediately via Blotato.
 # Runs for up to 15 minutes as a background function.
 [functions."daily-scheduler-background"]
-  schedule = "0 13 * * *"
+  schedule = "*/30 * * * *"
 
 # ── Background Function: process-reel-background (PRESERVED — INACTIVE) ───────
 # Old FFmpeg end card pipeline. Not used in the active flow.
