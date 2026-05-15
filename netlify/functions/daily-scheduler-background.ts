@@ -568,7 +568,10 @@ const handler: Handler = async () => {
   const NATIVE_ENDING_SUFFIX =
     "\n\nThe reference image provided is the exact Got Jesus logo end card. Use it precisely and faithfully for the final 1-second branded end card described above: centered white logo on clean black, sharp and undistorted.";
 
-  for (const slotInfo of slotsToProcess) {
+  // Process all slots in PARALLEL so total runtime ≈ 1 video duration, not N×.
+  // Sequential processing would risk hitting Netlify's 15-min background function
+  // timeout when 3+ slots each take 5-10 min to generate, download, and upload.
+  const processSlot = async (slotInfo: typeof slotsToProcess[number]) => {
     const { timeHHMM, promptText, caption, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
     const scheduledForISO = pacificTimeToUTCISO(timeHHMM);
     console.log(`[scheduler] Slot ${slotKey} ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
@@ -577,7 +580,7 @@ const handler: Handler = async () => {
     const exists = await scheduledReelExists(supabase, scheduledForISO);
     if (exists) {
       console.log(`[scheduler] Reel already exists for slot ${slotKey} ${timeHHMM}. Skipping.`);
-      continue;
+      return;
     }
 
     // Create DB row
@@ -634,7 +637,14 @@ const handler: Handler = async () => {
         error_message: message,
       }).catch(() => {});
     }
-  }
+  };
+
+  // Run all slots concurrently — each slot's failure is isolated and won't block others
+  const results = await Promise.allSettled(slotsToProcess.map(processSlot));
+  results.forEach((r, i) => {
+    if (r.status === "rejected")
+      console.error(`[scheduler] Slot ${slotsToProcess[i].slotKey} threw unexpected error:`, r.reason);
+  });
 
   console.log("[scheduler] Done");
   return { statusCode: 200 };
