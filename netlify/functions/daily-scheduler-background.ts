@@ -17,9 +17,10 @@
  *   6. Publish to Blotato with scheduledTime = the slot's Pacific time in UTC.
  *   7. Update the DB row with Blotato submission IDs and status="scheduled".
  *
- * gotjesus_posting_settings.auto_post_enabled acts as a global master ON/OFF gate.
- * Platform toggles (instagram_enabled, tiktok_enabled, youtube_enabled) in that
- * table control which platforms receive posts.
+ * No auto_post_enabled gate — automation runs whenever slots are enabled.
+ * The slot's own Enabled toggle is the only gate.
+ * Platform toggles (instagram_enabled, tiktok_enabled, youtube_enabled) in
+ * gotjesus_posting_settings control which platforms receive posts.
  *
  * All helpers are inlined because Netlify background functions are bundled
  * separately and cannot resolve @/ path aliases.
@@ -206,12 +207,11 @@ function getSupabase(): SupabaseClient {
 async function getPostingSettings(supabase: SupabaseClient) {
   const { data } = await supabase
     .from("gotjesus_posting_settings")
-    .select("auto_post_enabled, instagram_enabled, tiktok_enabled, youtube_enabled")
+    .select("instagram_enabled, tiktok_enabled, youtube_enabled")
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   return data as {
-    auto_post_enabled: boolean;
     instagram_enabled: boolean;
     tiktok_enabled: boolean;
     youtube_enabled: boolean;
@@ -516,28 +516,21 @@ const handler: Handler = async () => {
 
   const supabase = getSupabase();
 
-  // Read posting settings
+  // Read platform settings — no auto_post_enabled gate.
+  // Automation runs whenever content slots are enabled; the slot toggles are the only gate.
   const settings = await getPostingSettings(supabase);
-  if (!settings) {
-    console.log("[scheduler] No posting settings found. Exiting.");
-    return { statusCode: 200, body: "no settings" };
-  }
-  if (!settings.auto_post_enabled) {
-    console.log("[scheduler] auto_post_enabled=false. Exiting.");
-    return { statusCode: 200, body: "auto_post disabled" };
-  }
 
-  // Build platform list from enabled settings
+  // Build platform list. If no settings row exists yet, default to all configured platforms.
   const enabledPlatforms: Platform[] = [];
-  if (settings.instagram_enabled && process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID)
+  if ((settings?.instagram_enabled ?? true) && process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID)
     enabledPlatforms.push("instagram");
-  if (settings.tiktok_enabled && process.env.BLOTATO_TIKTOK_ACCOUNT_ID)
+  if ((settings?.tiktok_enabled ?? true) && process.env.BLOTATO_TIKTOK_ACCOUNT_ID)
     enabledPlatforms.push("tiktok");
-  if (settings.youtube_enabled && process.env.BLOTATO_YOUTUBE_ACCOUNT_ID)
+  if ((settings?.youtube_enabled ?? true) && process.env.BLOTATO_YOUTUBE_ACCOUNT_ID)
     enabledPlatforms.push("youtube");
 
   if (enabledPlatforms.length === 0) {
-    console.log("[scheduler] No platforms enabled or configured. Exiting.");
+    console.log("[scheduler] No platforms configured. Exiting.");
     return { statusCode: 200, body: "no platforms" };
   }
 
