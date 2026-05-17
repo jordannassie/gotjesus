@@ -132,6 +132,25 @@ export default function ContentSlotCard({
     }
   }, [slot.id, slotName, promptText, postCaption, enabled, scheduledTime, duration, resolution, onSlotUpdate]);
 
+  // Toggle enabled and immediately persist — no Save button click required.
+  const handleToggleEnabled = useCallback(async () => {
+    const next = !enabled;
+    setEnabled(next);
+    try {
+      const res = await fetch("/api/content-slots", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: slot.id, enabled: next }),
+      });
+      const data = (await res.json()) as ContentSlot & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      onSlotUpdate(data);
+    } catch {
+      // Revert on failure
+      setEnabled(!next);
+    }
+  }, [enabled, slot.id, onSlotUpdate]);
+
   // ── Image upload ──────────────────────────────────────────────────────────
 
   const handleImageFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -310,7 +329,7 @@ export default function ContentSlotCard({
               type="button"
               role="switch"
               aria-checked={enabled}
-              onClick={() => setEnabled((v) => !v)}
+              onClick={handleToggleEnabled}
               className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer ${enabled ? "bg-emerald-500" : "bg-neutral-700"}`}
             >
               <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${enabled ? "translate-x-4" : "translate-x-1"}`} />
