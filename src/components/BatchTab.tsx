@@ -63,7 +63,15 @@ const HOW_IT_WORKS = [
 
 // ─── Concept Card ─────────────────────────────────────────────────────────────
 
-function ConceptCard({ item, index }: { item: BatchItem; index: number }) {
+function ConceptCard({
+  item,
+  index,
+  saved,
+}: {
+  item: BatchItem;
+  index: number;
+  saved: boolean;
+}) {
   const [promptOpen, setPromptOpen] = useState(false);
   const [captionOpen, setCaptionOpen] = useState(false);
 
@@ -92,8 +100,26 @@ function ConceptCard({ item, index }: { item: BatchItem; index: number }) {
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-600">
               {item.durationSeconds}s · {item.aspectRatio}
             </span>
+            {saved && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-900 text-emerald-500">
+                Saved
+              </span>
+            )}
           </div>
         </div>
+        {saved && (
+          <button
+            type="button"
+            disabled
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-800 text-[11px] font-medium text-neutral-700 cursor-not-allowed flex-shrink-0"
+            title="Video generation coming in next step"
+          >
+            <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+            </svg>
+            Generate Video
+          </button>
+        )}
       </div>
 
       <div className="px-4 py-4 flex flex-col gap-3">
@@ -179,7 +205,11 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
   const [error, setError] = useState("");
   const [batchPlan, setBatchPlan] = useState<BatchPlanResponse | null>(null);
 
-  const canGenerate = instruction.trim().length > 0 && !isGenerating;
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [savedBatchId, setSavedBatchId] = useState<string | null>(null);
+
+  const canGenerate = instruction.trim().length > 0 && !isGenerating && !isSaving;
 
   const handleGenerate = useCallback(async () => {
     if (!canGenerate) return;
@@ -214,6 +244,56 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
       setIsGenerating(false);
     }
   }, [workspaceKey, brandName, instruction, batchType, referenceImageUrl, canGenerate]);
+
+  const handleSave = useCallback(async () => {
+    if (!batchPlan || isSaving || savedBatchId) return;
+    setIsSaving(true);
+    setSaveError("");
+
+    try {
+      const res = await fetch("/api/campaign-batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceKey,
+          brandName,
+          batchTitle: batchPlan.batchTitle,
+          batchType: batchPlan.batchType,
+          instruction: instruction.trim(),
+          referenceImageUrl: referenceImageUrl.trim() || undefined,
+          items: batchPlan.items.map((item) => ({
+            title: item.title,
+            adType: item.adType,
+            hook: item.hook,
+            promptText: item.promptText,
+            caption: item.caption,
+            reason: item.reason,
+            platform: item.platform,
+            durationSeconds: item.durationSeconds,
+            aspectRatio: item.aspectRatio,
+            resolution: item.resolution,
+            model: item.model,
+          })),
+        }),
+      });
+
+      const data = (await res.json()) as { batch?: { id: string }; error?: string };
+
+      if (!res.ok) {
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+
+      if (!data.batch?.id) {
+        throw new Error("Save succeeded but batch id was missing in response.");
+      }
+
+      setSavedBatchId(data.batch.id);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [batchPlan, isSaving, savedBatchId, workspaceKey, brandName, instruction, batchType, referenceImageUrl]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -387,34 +467,94 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
               <h3 className="text-sm font-bold text-white">{batchPlan.batchTitle}</h3>
               <span className="text-[10px] text-neutral-600">{batchPlan.batchType} · {batchPlan.items.length} concepts · {brandName}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => { setBatchPlan(null); setError(""); }}
-              className="text-xs text-neutral-600 hover:text-neutral-300 transition-colors border border-neutral-800 rounded-lg px-3 py-1.5"
-            >
-              New Batch
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Save Batch — only shown when not yet saved */}
+              {!savedBatchId && (
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    isSaving
+                      ? "bg-neutral-800 text-neutral-500 cursor-wait"
+                      : "bg-white text-black hover:bg-neutral-200"
+                  }`}
+                >
+                  {isSaving ? (
+                    <>
+                      <span
+                        className="w-3.5 h-3.5 rounded-full animate-spin inline-block flex-shrink-0"
+                        style={{
+                          border: "2px solid transparent",
+                          borderTopColor: "#a3e635",
+                          borderRightColor: "#22d3ee",
+                        }}
+                      />
+                      Saving…
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V6h5a2 2 0 012 2v7a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h5v5.586l-1.293-1.293zM9 4a1 1 0 012 0v2H9V4z" />
+                      </svg>
+                      Save Batch
+                    </>
+                  )}
+                </button>
+              )}
+              {/* Saved success state */}
+              {savedBatchId && (
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 px-3 py-2 rounded-xl border border-emerald-900 bg-emerald-950/30">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  Batch saved. Ready to generate videos.
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchPlan(null);
+                  setError("");
+                  setSaveError("");
+                  setSavedBatchId(null);
+                }}
+                className="text-xs text-neutral-600 hover:text-neutral-300 transition-colors border border-neutral-800 rounded-lg px-3 py-1.5"
+              >
+                New Batch
+              </button>
+            </div>
           </div>
+
+          {/* Save error */}
+          {saveError && (
+            <div className="rounded-xl border border-red-900 bg-red-950/30 px-4 py-3">
+              <p className="text-xs font-semibold text-red-400 mb-0.5">Save failed</p>
+              <p className="text-xs text-red-500 leading-relaxed">{saveError}</p>
+            </div>
+          )}
 
           {/* Concept cards grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {batchPlan.items.map((item, i) => (
-              <ConceptCard key={i} item={item} index={i} />
+              <ConceptCard key={i} item={item} index={i} saved={!!savedBatchId} />
             ))}
           </div>
 
-          {/* Review note */}
-          <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 px-5 py-4 flex items-start gap-3">
-            <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-            </svg>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xs font-semibold text-neutral-300">Review these concepts first.</span>
-              <p className="text-xs text-neutral-500 leading-relaxed">
-                Next step will save the batch. Nothing generates or posts yet.
-              </p>
+          {/* Review note — only shown before save */}
+          {!savedBatchId && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 px-5 py-4 flex items-start gap-3">
+              <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-semibold text-neutral-300">Review these concepts first.</span>
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  Next step will generate the videos. Nothing generates or posts yet.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       ) : !isGenerating ? (
         /* Empty state — shown before first generation */

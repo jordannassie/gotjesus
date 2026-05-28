@@ -286,3 +286,78 @@ create index if not exists social_connections_platform_idx
 
 create index if not exists social_connections_provider_idx
   on social_connections (provider);
+
+-- ─── Batch campaign plans ────────────────────────────────────────────────────
+-- campaign_batches: one row per OpenAI-generated batch campaign plan.
+-- campaign_items:   one row per video concept within a batch (8 per batch MVP).
+-- status values for batches: 'planned' | 'generating' | 'done' | 'failed'
+-- status values for items:   'planned' | 'generating' | 'ready' | 'failed'
+
+create table if not exists campaign_batches (
+  id                  uuid        primary key default gen_random_uuid(),
+  created_at          timestamptz not null    default now(),
+  updated_at          timestamptz not null    default now(),
+  user_key            text        not null    default 'demo_jordan',
+  workspace_key       text        not null    default 'gotjesus',
+  brand_name          text,
+  batch_title         text,
+  batch_type          text,
+  instruction         text,
+  reference_image_url text,
+  status              text        not null    default 'planned'
+);
+
+create table if not exists campaign_items (
+  id                uuid        primary key default gen_random_uuid(),
+  created_at        timestamptz not null    default now(),
+  updated_at        timestamptz not null    default now(),
+  user_key          text        not null    default 'demo_jordan',
+  workspace_key     text        not null    default 'gotjesus',
+  batch_id          uuid        references campaign_batches(id) on delete cascade,
+  title             text,
+  ad_type           text,
+  hook              text,
+  prompt_text       text,
+  caption           text,
+  reason            text,
+  platform          text,
+  duration_seconds  integer     not null    default 8,
+  aspect_ratio      text        not null    default '9:16',
+  resolution        text        not null    default '480p',
+  model             text        not null    default 'Seedance 2.0 Fast',
+  status            text        not null    default 'planned',
+  kie_task_id       text,
+  video_url         text,
+  thumbnail_url     text,
+  error_message     text
+);
+
+alter table campaign_batches enable row level security;
+alter table campaign_items   enable row level security;
+
+create policy "service role select campaign batches"
+  on campaign_batches for select using (true);
+create policy "service role insert campaign batches"
+  on campaign_batches for insert with check (true);
+create policy "service role update campaign batches"
+  on campaign_batches for update using (true);
+create policy "service role delete campaign batches"
+  on campaign_batches for delete using (true);
+
+create policy "service role select campaign items"
+  on campaign_items for select using (true);
+create policy "service role insert campaign items"
+  on campaign_items for insert with check (true);
+create policy "service role update campaign items"
+  on campaign_items for update using (true);
+create policy "service role delete campaign items"
+  on campaign_items for delete using (true);
+
+create index if not exists campaign_batches_workspace_key_idx
+  on campaign_batches (workspace_key);
+create index if not exists campaign_items_workspace_key_idx
+  on campaign_items (workspace_key);
+create index if not exists campaign_items_batch_id_idx
+  on campaign_items (batch_id);
+create index if not exists campaign_items_status_idx
+  on campaign_items (status);
