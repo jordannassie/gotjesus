@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { getWorkspaceName } from "@/lib/workspaces";
+import { getWorkspaceName, getDefaultPostCaption } from "@/lib/workspaces";
 
 // ─── LocalStorage draft persistence ──────────────────────────────────────────
 
@@ -13,6 +13,7 @@ interface BatchDraft {
   useChatGPT?: boolean;
   includeVoiceover?: boolean;
   batchSize?: number;
+  postCaption?: string;
 }
 
 // Voiceover defaults to ON only for UGC Ads (mirrors batch-plan/route.ts)
@@ -364,6 +365,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
   const [batchType, setBatchType] = useState<string>(BATCH_TYPES[0]);
   const [batchSize, setBatchSize] = useState(4);
   const [includeVoiceover, setIncludeVoiceover] = useState(false); // loaded from draft or batchType default
+  const [postCaption, setPostCaption] = useState(() => getDefaultPostCaption(workspaceKey));
 
   // Auto-update voiceover default when batch type changes (unless user already has a draft)
   const voiceoverUserOverride = useRef(false);
@@ -431,12 +433,17 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     if (typeof draft.batchSize === "number" && draft.batchSize >= 1 && draft.batchSize <= 8) {
       setBatchSize(draft.batchSize);
     }
+    if (typeof draft.postCaption === "string") {
+      setPostCaption(draft.postCaption);
+    } else {
+      setPostCaption(getDefaultPostCaption(workspaceKey));
+    }
   }, [workspaceKey]);
 
   // ── Draft persistence: auto-save whenever relevant state changes ──────────
   useEffect(() => {
-    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize });
-  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize]);
+    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize, postCaption });
+  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize, postCaption]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -534,6 +541,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
           workspaceKey, brandName,
           batchTitle: batchPlan.batchTitle, batchType: batchPlan.batchType,
           instruction: chatGptInstruction.trim(), referenceImageUrl: firstImageUrl || undefined,
+          postCaption: postCaption.trim() || undefined,
           items: batchPlan.items.map(item => ({
             title: item.title, adType: item.adType, hook: item.hook, promptText: item.promptText,
             caption: item.caption, reason: item.reason, platform: item.platform,
@@ -937,6 +945,21 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
             )}
           </div>
 
+          {/* Post Caption */}
+          <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-800/60">
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Post Caption for Library</label>
+              <p className="text-[10px] text-neutral-700">Used when videos are saved to Library and posted later. Not added inside the video.</p>
+            </div>
+            <textarea
+              value={postCaption}
+              onChange={e => setPostCaption(e.target.value)}
+              rows={2}
+              placeholder="Write the caption and hashtags for this batch..."
+              className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2 text-xs text-neutral-300 placeholder-neutral-700 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors leading-relaxed"
+            />
+          </div>
+
           {/* Action button */}
           <div className="flex items-center justify-between pt-1 flex-wrap gap-3">
             {useChatGPT ? (
@@ -999,6 +1022,14 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
               </button>
             </div>
           </div>
+
+          {/* Post caption preview */}
+          {postCaption.trim() && (
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-neutral-800 bg-neutral-900/40">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600 shrink-0 mt-0.5 w-20">Post Caption</span>
+              <p className="text-[11px] text-neutral-500 leading-relaxed flex-1">{postCaption}</p>
+            </div>
+          )}
 
           {/* Save error */}
           {saveError && (

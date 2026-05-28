@@ -81,3 +81,18 @@ export function getWorkspaceName(key?: string | null): string {
 export function normalizeWorkspaceKey(key?: string | null): WorkspaceKey {
   return getWorkspaceByKey(key).key;
 }
+
+/** Default social post caption for each workspace — used by the Batch engine
+ *  as the starting caption for Library/Post Now. NOT inserted into video prompts. */
+const DEFAULT_POST_CAPTIONS: Record<string, string> = {
+  gotjesus:  "Jesus Loves You! #jesus #gotjesus #faith #christian",
+  ugcfire:   "Built to grab attention. #ugc #ugcad #contentmarketing #brandgrowth",
+  sellbop:   "Launch your next product online. #digitalproducts #sidehustle #creatorbusiness",
+  godvo:     "The future needs an authority layer. #ai #futuretech #governance #automation",
+  "1billion": "One message can change a life. #gospel #discipleship #faith",
+};
+
+export function getDefaultPostCaption(key?: string | null): string {
+  return DEFAULT_POST_CAPTIONS[normalizeWorkspaceKey(key)] ??
+    "New drop just launched. #brand #reels #shorts #socialvideo";
+}

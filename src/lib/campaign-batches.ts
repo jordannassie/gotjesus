@@ -69,6 +69,8 @@ export interface CampaignBatch {
   instruction: string | null;
   reference_image_url: string | null;
   status: string;
+  /** Social post caption for Library/Post Now. NOT inserted into video prompts. */
+  post_caption: string | null;
 }
 
 export interface CampaignItem {
@@ -118,6 +120,8 @@ export interface CreateCampaignBatchInput {
   batchType?: string;
   instruction?: string;
   referenceImageUrl?: string;
+  /** Social post caption for Library/Post Now — NOT for Seedance video generation. */
+  postCaption?: string;
   items: CreateItemData[];
 }
 
@@ -152,6 +156,7 @@ export async function createCampaignBatchWithItems(
     batch_type: input.batchType ?? null,
     instruction: input.instruction ?? null,
     reference_image_url: input.referenceImageUrl ?? null,
+    post_caption: input.postCaption ?? null,
     status: "planned",
   };
 
@@ -222,6 +227,7 @@ export async function createCampaignBatchWithItems(
     batch_type: input.batchType ?? null,
     instruction: input.instruction ?? null,
     reference_image_url: input.referenceImageUrl ?? null,
+    post_caption: input.postCaption ?? null,
     status: "planned",
   };
 

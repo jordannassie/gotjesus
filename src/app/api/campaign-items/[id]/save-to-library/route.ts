@@ -63,12 +63,13 @@ export async function POST(
   }
 
   // ── Load parent batch ────────────────────────────────────────────────────────
+  // Caption priority: item.caption (GPT per-video) → batch.post_caption (user-entered) → batch title
   let captionUsed = item.caption ?? "";
   let batchId: string | null = item.batch_id ?? null;
   if (batchId) {
     const batch = await getCampaignBatchById(batchId);
     if (batch) {
-      if (!captionUsed) captionUsed = batch.batch_title ?? "";
+      if (!captionUsed) captionUsed = batch.post_caption ?? batch.batch_title ?? "";
     }
   }
 

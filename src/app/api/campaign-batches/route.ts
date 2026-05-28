@@ -54,13 +54,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const workspaceKey = String(body["workspaceKey"] ?? "gotjesus");
-  const brandName    = body["brandName"]        ? String(body["brandName"])        : undefined;
-  const batchTitle   = body["batchTitle"]        ? String(body["batchTitle"])        : undefined;
-  const batchType    = body["batchType"]         ? String(body["batchType"])         : undefined;
-  const instruction  = body["instruction"]       ? String(body["instruction"])       : undefined;
-  const referenceImageUrl = body["referenceImageUrl"] ? String(body["referenceImageUrl"]) : undefined;
-  const rawItems     = body["items"];
+  const workspaceKey      = String(body["workspaceKey"] ?? "gotjesus");
+  const brandName         = body["brandName"]         ? String(body["brandName"])         : undefined;
+  const batchTitle        = body["batchTitle"]         ? String(body["batchTitle"])         : undefined;
+  const batchType         = body["batchType"]          ? String(body["batchType"])          : undefined;
+  const instruction       = body["instruction"]        ? String(body["instruction"])        : undefined;
+  const referenceImageUrl = body["referenceImageUrl"]  ? String(body["referenceImageUrl"])  : undefined;
+  const postCaption       = body["postCaption"]        ? String(body["postCaption"])        : undefined;
+  const rawItems          = body["items"];
 
   // Validate items
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
       batchType,
       instruction,
       referenceImageUrl,
+      postCaption,
       items,
     });
 

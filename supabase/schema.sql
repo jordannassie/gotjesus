@@ -371,3 +371,9 @@ alter table gotjesus_reels add column if not exists batch_id         uuid;
 alter table gotjesus_reels add column if not exists campaign_item_id uuid;
 alter table gotjesus_reels add column if not exists ad_type          text;
 alter table gotjesus_reels add column if not exists hook             text;
+
+-- ─── Batch post caption ───────────────────────────────────────────────────────
+-- Stores the social post caption entered in the Batch form.
+-- This is separate from Seedance promptText — it is only used for Library/Post Now.
+
+alter table campaign_batches add column if not exists post_caption text;
