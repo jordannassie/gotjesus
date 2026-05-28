@@ -61,6 +61,13 @@ export async function POST(req: NextRequest) {
   const instruction       = body["instruction"]        ? String(body["instruction"])        : undefined;
   const referenceImageUrl = body["referenceImageUrl"]  ? String(body["referenceImageUrl"])  : undefined;
   const postCaption       = body["postCaption"]        ? String(body["postCaption"])        : undefined;
+  const rawReferenceImages = Array.isArray(body["referenceImages"]) ? body["referenceImages"] as Array<Record<string, unknown>> : undefined;
+  const referenceImages = rawReferenceImages?.map((img) => ({
+    tag:  img["tag"]  ? String(img["tag"])  : "@product1",
+    info: img["info"] ? String(img["info"]) : undefined,
+    name: img["name"] ? String(img["name"]) : undefined,
+    url:  img["url"]  ? String(img["url"])  : "",
+  }));
   const rawItems          = body["items"];
 
   // Validate items
@@ -89,6 +96,7 @@ export async function POST(req: NextRequest) {
       instruction,
       referenceImageUrl,
       postCaption,
+      referenceImages,
       items,
     });
 

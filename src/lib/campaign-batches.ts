@@ -71,6 +71,8 @@ export interface CampaignBatch {
   status: string;
   /** Social post caption for Library/Post Now. NOT inserted into video prompts. */
   post_caption: string | null;
+  /** Full tagged reference image list (tag, info, name, url). Stored as JSONB. */
+  reference_images: Array<{ tag: string; info?: string; name?: string; url: string }> | null;
 }
 
 export interface CampaignItem {
@@ -122,6 +124,8 @@ export interface CreateCampaignBatchInput {
   referenceImageUrl?: string;
   /** Social post caption for Library/Post Now — NOT for Seedance video generation. */
   postCaption?: string;
+  /** All tagged reference images — tag, info, name, url. Saved as JSONB. */
+  referenceImages?: Array<{ tag: string; info?: string; name?: string; url: string }>;
   items: CreateItemData[];
 }
 
@@ -157,6 +161,7 @@ export async function createCampaignBatchWithItems(
     instruction: input.instruction ?? null,
     reference_image_url: input.referenceImageUrl ?? null,
     post_caption: input.postCaption ?? null,
+    reference_images: input.referenceImages ?? [],
     status: "planned",
   };
 
@@ -228,6 +233,7 @@ export async function createCampaignBatchWithItems(
     instruction: input.instruction ?? null,
     reference_image_url: input.referenceImageUrl ?? null,
     post_caption: input.postCaption ?? null,
+    reference_images: input.referenceImages ?? [],
     status: "planned",
   };
 

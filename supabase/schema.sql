@@ -377,3 +377,4 @@ alter table gotjesus_reels add column if not exists hook             text;
 -- This is separate from Seedance promptText — it is only used for Library/Post Now.
 
 alter table campaign_batches add column if not exists post_caption text;
+alter table campaign_batches add column if not exists reference_images jsonb not null default '[]'::jsonb;
