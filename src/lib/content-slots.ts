@@ -18,6 +18,8 @@ export interface SlotImage {
   url: string;
   path: string;
   name: string;
+  tag?: string;   // e.g. "@product1", "@model1" — used in Seedance prompts
+  info?: string;  // human description of what the image is, sent to GPT
 }
 
 export interface ContentSlot {
@@ -240,6 +242,8 @@ export async function upsertContentSlot(
   if (slot.durationSeconds !== undefined) updates.duration_seconds = slot.durationSeconds;
   if (slot.aspectRatio !== undefined) updates.aspect_ratio = slot.aspectRatio;
   if (slot.resolution !== undefined) updates.resolution = slot.resolution;
+  // Allow saving tag/info edits alongside other slot changes
+  if (slot.referenceImages !== undefined) updates.reference_images = slot.referenceImages as SlotImage[];
 
   const { data, error } = await supabase
     .from("gotjesus_content_slots")

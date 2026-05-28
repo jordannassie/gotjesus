@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import type { ContentSlot } from "@/lib/content-slots";
+import type { ContentSlot, SlotImage } from "@/lib/content-slots";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type GenStatus = "idle" | "submitting" | "generating" | "saving" | "done" | "error";
+type CreativeStatus = "idle" | "loading" | "done" | "error";
 
 interface Props {
   slot: ContentSlot;
@@ -14,11 +15,37 @@ interface Props {
   isLastSlot?: boolean;
 }
 
+interface CreativeSuggestion {
+  improvedPrompt: string;
+  suggestedPostCaption: string;
+  hook: string;
+  reason: string;
+}
+
 const POLL_INTERVAL_MS = 6000;
 const MAX_POLLS = 120;
 
 const DURATION_OPTIONS = [5, 8, 10, 12, 15];
 const RESOLUTION_OPTIONS = ["480p", "720p", "1080p"];
+
+const TAG_SUGGESTIONS = ["@product1", "@product2", "@product3", "@model1", "@model2", "@model3", "@logo", "@brandcard"];
+
+// Auto-fill a default tag based on position
+function defaultTag(idx: number, existingTags: string[]): string {
+  const product = `@product${idx + 1}`;
+  if (!existingTags.includes(product)) return product;
+  return `@product${existingTags.length + 1}`;
+}
+
+// Merge DB images with local state (preserve local tag/info for unchanged paths)
+function mergeImages(dbImages: SlotImage[], local: SlotImage[]): SlotImage[] {
+  const localMap = new Map(local.map((img) => [img.path, img]));
+  return dbImages.map((img, i) => {
+    const existing = localMap.get(img.path);
+    if (existing) return existing; // keep local tag/info edits
+    return { ...img, tag: defaultTag(i, dbImages.map((di, j) => j < i ? local[j]?.tag ?? `@product${j + 1}` : "").filter(Boolean)), info: "" };
+  });
+}
 
 // No client-side aspect ratio validation on reference images.
 // The server (generate-video route) silently filters out any image whose pixel
@@ -40,7 +67,15 @@ export default function ContentSlotCard({
   const [scheduledTime, setScheduledTime] = useState(slot.scheduledPostTime);
   const [duration, setDuration] = useState(slot.durationSeconds);
   const [resolution, setResolution] = useState(slot.resolution);
-  const [images, setImages] = useState(slot.referenceImages);
+
+  // Images with tag/info: init from DB, auto-fill tag if missing
+  const [images, setImages] = useState<SlotImage[]>(() =>
+    slot.referenceImages.map((img, i) => ({
+      ...img,
+      tag: img.tag ?? `@product${i + 1}`,
+      info: img.info ?? "",
+    }))
+  );
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [promptCopied, setPromptCopied] = useState(false);
@@ -60,9 +95,13 @@ export default function ContentSlotCard({
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressStart = useRef(0);
 
+  // GPT Creative state
+  const [creativeStatus, setCreativeStatus] = useState<CreativeStatus>("idle");
+  const [creativeError, setCreativeError] = useState("");
+  const [creativeSuggestion, setCreativeSuggestion] = useState<CreativeSuggestion | null>(null);
+  const [officialEndCardEnabled, setOfficialEndCardEnabled] = useState(false);
+
   // Animate the progress bar while generation is running.
-  // Uses a decay curve: fast at first, then slows toward 90% asymptote.
-  // On completion/error, snaps to 100% or holds wherever it stopped.
   useEffect(() => {
     const running = ["submitting", "generating", "saving"].includes(genStatus);
 
@@ -71,9 +110,7 @@ export default function ContentSlotCard({
         progressStart.current = Date.now();
         setGenProgress(0);
         progressTimer.current = setInterval(() => {
-          const elapsed = (Date.now() - progressStart.current) / 1000; // seconds
-          // Asymptotic: progress = 90 * (1 - e^(-elapsed / 80))
-          // Reaches ~50% at ~55s, ~75% at ~110s, ~90% at ~184s (never hits 90 before done)
+          const elapsed = (Date.now() - progressStart.current) / 1000;
           const pct = 90 * (1 - Math.exp(-elapsed / 80));
           setGenProgress(Math.min(pct, 89));
         }, 400);
@@ -85,7 +122,6 @@ export default function ContentSlotCard({
       }
       if (genStatus === "done") {
         setGenProgress(100);
-        // Reset after a short display period
         setTimeout(() => setGenProgress(0), 2000);
       } else if (genStatus === "error") {
         setGenProgress(0);
@@ -119,6 +155,7 @@ export default function ContentSlotCard({
           durationSeconds: duration,
           aspectRatio: "9:16",
           resolution,
+          referenceImages: images, // persist tag/info edits
         }),
       });
       const data = (await res.json()) as ContentSlot & { error?: string };
@@ -130,9 +167,9 @@ export default function ContentSlotCard({
       setSaveError(err instanceof Error ? err.message : "Save failed.");
       setSaveStatus("error");
     }
-  }, [slot.id, slotName, promptText, postCaption, enabled, scheduledTime, duration, resolution, onSlotUpdate]);
+  }, [slot.id, slotName, promptText, postCaption, enabled, scheduledTime, duration, resolution, images, onSlotUpdate]);
 
-  // Toggle enabled and immediately persist — no Save button click required.
+  // Toggle enabled and immediately persist
   const handleToggleEnabled = useCallback(async () => {
     const next = !enabled;
     setEnabled(next);
@@ -146,10 +183,15 @@ export default function ContentSlotCard({
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       onSlotUpdate(data);
     } catch {
-      // Revert on failure
       setEnabled(!next);
     }
   }, [enabled, slot.id, onSlotUpdate]);
+
+  // ── Image tag/info editing ─────────────────────────────────────────────────
+
+  const handleUpdateImageMeta = useCallback((path: string, updates: { tag?: string; info?: string }) => {
+    setImages((prev) => prev.map((img) => img.path === path ? { ...img, ...updates } : img));
+  }, []);
 
   // ── Image upload ──────────────────────────────────────────────────────────
 
@@ -166,14 +208,16 @@ export default function ContentSlotCard({
       const res = await fetch("/api/content-slots/upload", { method: "POST", body: form });
       const data = (await res.json()) as ContentSlot & { error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setImages(data.referenceImages);
-      onSlotUpdate(data);
+      // Merge DB images with local state to preserve tag/info edits
+      const merged = mergeImages(data.referenceImages, images);
+      setImages(merged);
+      onSlotUpdate({ ...data, referenceImages: merged });
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
       setUploadingImage(false);
     }
-  }, [slot.id, onSlotUpdate]);
+  }, [slot.id, images, onSlotUpdate]);
 
   const handleRemoveImage = useCallback(async (path: string) => {
     setRemovingPath(path);
@@ -185,12 +229,44 @@ export default function ContentSlotCard({
       });
       const data = (await res.json()) as ContentSlot & { error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setImages(data.referenceImages);
-      onSlotUpdate(data);
+      const merged = mergeImages(data.referenceImages, images);
+      setImages(merged);
+      onSlotUpdate({ ...data, referenceImages: merged });
     } catch { /* ignore */ } finally {
       setRemovingPath(null);
     }
-  }, [slot.id, onSlotUpdate]);
+  }, [slot.id, images, onSlotUpdate]);
+
+  // ── GPT Creative ──────────────────────────────────────────────────────────
+
+  const handleRunCreative = useCallback(async () => {
+    setCreativeStatus("loading");
+    setCreativeError("");
+    setCreativeSuggestion(null);
+    try {
+      const res = await fetch("/api/creative-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceKey: slot.workspaceKey,
+          slotName,
+          currentPrompt: promptText,
+          postCaption,
+          referenceImages: images,
+          durationSeconds: duration,
+          aspectRatio: "9:16",
+          officialEndCardEnabled,
+        }),
+      });
+      const data = (await res.json()) as CreativeSuggestion & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setCreativeSuggestion(data);
+      setCreativeStatus("done");
+    } catch (err) {
+      setCreativeError(err instanceof Error ? err.message : "Creative failed.");
+      setCreativeStatus("error");
+    }
+  }, [slot.workspaceKey, slotName, promptText, postCaption, images, duration, officialEndCardEnabled]);
 
   // ── Generate test ─────────────────────────────────────────────────────────
 
@@ -231,7 +307,6 @@ export default function ContentSlotCard({
           slotKey: slot.slotKey,
           resolution,
           duration,
-          // aspectRatio omitted — locked to "9:16" server-side
         }),
       });
       const data = (await res.json()) as { taskId?: string; error?: string };
@@ -289,7 +364,7 @@ export default function ContentSlotCard({
           : undefined,
       }}
     >
-      {/* Large neon percent overlay — top-right corner during generation */}
+      {/* Large neon percent overlay */}
       {genRunning && genProgress > 0 && (
         <div
           className="absolute top-3 right-4 z-10 tabular-nums font-black leading-none pointer-events-none select-none"
@@ -395,37 +470,90 @@ export default function ContentSlotCard({
       </div>
 
       <div className="px-5 py-4 flex flex-col gap-4">
-        {/* Image chips */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {images.map((img) => (
-            <div key={img.path} className="group relative flex items-center gap-1 bg-neutral-800 border border-neutral-700 rounded-lg overflow-hidden pr-1">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={img.url} alt={img.name} className="w-16 h-16 object-cover flex-shrink-0" />
-              <span className="text-[10px] text-neutral-400 max-w-[60px] truncate">{img.name}</span>
-              <button
-                type="button"
-                onClick={() => void handleRemoveImage(img.path)}
-                disabled={removingPath === img.path}
-                className="ml-0.5 text-neutral-600 hover:text-red-400 transition-colors text-xs leading-none"
-              >
-                {removingPath === img.path ? "…" : "×"}
-              </button>
+
+        {/* ── Reference Images with Tag + Info ─────────────────────────────── */}
+        <div className="flex flex-col gap-2">
+          {images.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {images.map((img) => (
+                <div key={img.path} className="flex items-start gap-2.5 bg-neutral-900 border border-neutral-800 rounded-xl p-2.5">
+                  {/* Thumbnail */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.url} alt={img.name} className="w-14 h-14 object-cover rounded-lg flex-shrink-0 bg-neutral-800" />
+
+                  {/* Tag + Info inputs */}
+                  <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                    {/* Tag input + suggestion pills */}
+                    <div className="flex flex-col gap-1">
+                      <input
+                        type="text"
+                        value={img.tag ?? ""}
+                        onChange={(e) => handleUpdateImageMeta(img.path, { tag: e.target.value })}
+                        placeholder="@product1"
+                        className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[11px] text-neutral-300 placeholder-neutral-600 outline-none focus:border-neutral-500 font-mono"
+                      />
+                      <div className="flex flex-wrap gap-1">
+                        {TAG_SUGGESTIONS.map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => handleUpdateImageMeta(img.path, { tag: t })}
+                            className={`text-[9px] px-1.5 py-0.5 rounded font-mono transition-colors ${img.tag === t ? "bg-sky-900/60 text-sky-400 border border-sky-800" : "text-neutral-600 hover:text-neutral-400 border border-neutral-800"}`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Info input */}
+                    <input
+                      type="text"
+                      value={img.info ?? ""}
+                      onChange={(e) => handleUpdateImageMeta(img.path, { info: e.target.value })}
+                      placeholder="Describe this image… e.g. Back of black T-shirt"
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[11px] text-neutral-400 placeholder-neutral-700 outline-none focus:border-neutral-500"
+                    />
+                    <span className="text-[9px] text-neutral-700 truncate">{img.name}</span>
+                  </div>
+
+                  {/* Remove */}
+                  <button
+                    type="button"
+                    onClick={() => void handleRemoveImage(img.path)}
+                    disabled={removingPath === img.path}
+                    className="text-neutral-700 hover:text-red-400 transition-colors text-sm leading-none flex-shrink-0 mt-1"
+                    title="Remove image"
+                  >
+                    {removingPath === img.path ? "…" : "×"}
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-          <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageFileChange} />
-          <button
-            type="button"
-            onClick={() => imageInputRef.current?.click()}
-            disabled={uploadingImage}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-neutral-700 text-[11px] text-neutral-500 hover:text-neutral-300 hover:border-neutral-500 transition-colors disabled:opacity-50"
-          >
-            {uploadingImage ? <span className="w-2.5 h-2.5 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee22", borderTopColor: "#a3e635" }} /> : "+"}
-            {uploadingImage ? "Uploading…" : "Add Image"}
-          </button>
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageFileChange} />
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              disabled={uploadingImage}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-neutral-700 text-[11px] text-neutral-500 hover:text-neutral-300 hover:border-neutral-500 transition-colors disabled:opacity-50"
+            >
+              {uploadingImage
+                ? <><span className="w-2.5 h-2.5 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee22", borderTopColor: "#a3e635" }} /> Uploading…</>
+                : <><span className="text-base leading-none">+</span> {images.length > 0 ? "Add Image" : "Add Reference Image"}</>
+              }
+            </button>
+            {images.length > 0 && (
+              <p className="text-[10px] text-neutral-700">
+                Tag edits are saved when you click <strong className="text-neutral-600">Save Slot</strong>.
+              </p>
+            )}
+          </div>
           {uploadError && <span className="text-[11px] text-red-400">{uploadError}</span>}
         </div>
 
-        {/* Compact prompt textarea */}
+        {/* ── Prompt textarea ────────────────────────────────────────────────── */}
         <div className="relative">
           <textarea
             value={promptText}
@@ -458,7 +586,82 @@ export default function ContentSlotCard({
           </button>
         </div>
 
-        {/* Post Caption */}
+        {/* ── GPT Creative suggestion panel ──────────────────────────────────── */}
+        {creativeStatus === "done" && creativeSuggestion && (
+          <div className="flex flex-col gap-3 rounded-xl border border-violet-900/50 bg-violet-950/20 px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-violet-400">GPT Creative Suggestion</span>
+              <button type="button" onClick={() => { setCreativeStatus("idle"); setCreativeSuggestion(null); }}
+                className="text-[10px] text-neutral-600 hover:text-neutral-400 transition-colors">
+                ✕ Cancel
+              </button>
+            </div>
+
+            {creativeSuggestion.hook && (
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Hook</span>
+                <p className="text-[11px] text-neutral-400 leading-relaxed">{creativeSuggestion.hook}</p>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Improved Prompt</span>
+              <p className="text-[11px] text-neutral-300 leading-relaxed whitespace-pre-wrap">{creativeSuggestion.improvedPrompt}</p>
+            </div>
+
+            {creativeSuggestion.suggestedPostCaption && (
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Suggested Caption</span>
+                <p className="text-[11px] text-neutral-400 leading-relaxed">{creativeSuggestion.suggestedPostCaption}</p>
+              </div>
+            )}
+
+            {creativeSuggestion.reason && (
+              <p className="text-[10px] text-neutral-700 italic leading-relaxed">{creativeSuggestion.reason}</p>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap pt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setPromptText(creativeSuggestion.improvedPrompt);
+                  setCreativeStatus("idle");
+                  setCreativeSuggestion(null);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-violet-900/60 border border-violet-800 text-xs font-semibold text-violet-300 hover:bg-violet-900 transition-colors"
+              >
+                Use This Prompt
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPromptText(creativeSuggestion.improvedPrompt);
+                  setPostCaption(creativeSuggestion.suggestedPostCaption);
+                  setCreativeStatus("idle");
+                  setCreativeSuggestion(null);
+                }}
+                className="px-3 py-1.5 rounded-lg border border-neutral-700 text-xs text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors"
+              >
+                Use Prompt + Caption
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRunCreative()}
+                className="px-3 py-1.5 rounded-lg border border-neutral-800 text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {creativeStatus === "error" && creativeError && (
+          <div className="rounded-lg border border-red-900 bg-red-950/30 px-3 py-2">
+            <p className="text-xs text-red-400">{creativeError}</p>
+          </div>
+        )}
+
+        {/* ── Post Caption ──────────────────────────────────────────────────── */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">
             Post Caption
@@ -472,15 +675,13 @@ export default function ContentSlotCard({
           />
         </div>
 
-        {/* Editable settings row */}
+        {/* ── Settings row ──────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Model — read-only */}
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900">
             <span className="text-[10px] text-neutral-600 uppercase tracking-widest">Model</span>
             <span className="text-xs text-neutral-400 font-medium">Seedance 2.0</span>
           </div>
 
-          {/* Duration — editable */}
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900">
             <span className="text-[10px] text-neutral-600 uppercase tracking-widest">Duration</span>
             <select
@@ -494,13 +695,11 @@ export default function ContentSlotCard({
             </select>
           </div>
 
-          {/* Aspect ratio — locked to 9:16 */}
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900" title="Output is locked to 9:16 vertical">
             <span className="text-[10px] text-neutral-600 uppercase tracking-widest">Aspect</span>
             <span className="text-xs text-neutral-500 font-medium">9:16 ⚙</span>
           </div>
 
-          {/* Resolution — editable */}
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900">
             <span className="text-[10px] text-neutral-600 uppercase tracking-widest">Res</span>
             <select
@@ -513,9 +712,20 @@ export default function ContentSlotCard({
               ))}
             </select>
           </div>
+
+          {/* Official End Card toggle for Creative */}
+          <button
+            type="button"
+            onClick={() => setOfficialEndCardEnabled((v) => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] transition-colors ${officialEndCardEnabled ? "border-sky-800 bg-sky-950/40 text-sky-400" : "border-neutral-800 bg-neutral-900 text-neutral-600"}`}
+            title="Official end card is appended automatically — tells GPT to write 7s of main content"
+          >
+            <span className="uppercase tracking-widest">End Card</span>
+            <span className="font-semibold">{officialEndCardEnabled ? "ON" : "OFF"}</span>
+          </button>
         </div>
 
-        {/* Generation progress bar */}
+        {/* ── Generation progress bar ───────────────────────────────────────── */}
         {(genRunning || genStatus === "done") && genProgress > 0 && (
           <div className="flex flex-col gap-1.5">
             <div className="w-full h-1.5 rounded-full bg-neutral-800 overflow-hidden">
@@ -536,7 +746,7 @@ export default function ContentSlotCard({
               <span className="text-[10px] font-medium tracking-wide uppercase"
                 style={{ color: genStatus === "done" ? "#4ade80" : "#22d3ee" }}>
                 {genStatus === "submitting" && (genProgress < 5 ? "Starting generation…" : "Sending prompt and images…")}
-                {genStatus === "generating" && (genProgress < 80 ? "Generating video…" : "Finalizing GotJesus end card…")}
+                {genStatus === "generating" && (genProgress < 80 ? "Generating video…" : "Finalizing end card…")}
                 {genStatus === "saving" && "Saving to Library…"}
                 {genStatus === "done" && "Complete ✓"}
               </span>
@@ -544,20 +754,38 @@ export default function ContentSlotCard({
           </div>
         )}
 
-        {/* Action row */}
+        {/* ── Action row ────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <button
-            type="button"
-            onClick={handleGenerateTest}
-            disabled={genRunning}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-700 bg-neutral-900 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {genRunning ? (
-              <><span className="w-3 h-3 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee44", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />{genLabel || "In progress…"}</>
-            ) : (
-              <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>Generate Test</>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Generate Test — unchanged */}
+            <button
+              type="button"
+              onClick={handleGenerateTest}
+              disabled={genRunning}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-700 bg-neutral-900 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {genRunning ? (
+                <><span className="w-3 h-3 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee44", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />{genLabel || "In progress…"}</>
+              ) : (
+                <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>Generate Test</>
+              )}
+            </button>
+
+            {/* Run Creative — GPT prompt improvement */}
+            <button
+              type="button"
+              onClick={() => void handleRunCreative()}
+              disabled={creativeStatus === "loading" || genRunning}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-violet-900 bg-violet-950/30 text-xs text-violet-400 hover:bg-violet-950/60 hover:text-violet-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {creativeStatus === "loading" ? (
+                <><span className="w-3 h-3 rounded-full animate-spin inline-block" style={{ border: "2px solid #7c3aed44", borderTopColor: "#a78bfa" }} />Creating prompt…</>
+              ) : (
+                <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" /></svg>Run Creative</>
+              )}
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={handleSave}
