@@ -52,6 +52,134 @@ export interface BatchPlanResponse {
   items: BatchItem[];
 }
 
+// ─── Batch type strategies ────────────────────────────────────────────────────
+// Each entry defines the creative focus and the 8 required ad-type labels that
+// GPT must use — in order. After GPT responds, adType is overwritten server-side
+// with these values so UI cards always reflect the selected strategy.
+
+interface BatchTypeStrategy {
+  focus: string;           // injected into system prompt
+  requiredAdTypes: readonly [string, string, string, string, string, string, string, string];
+}
+
+const BATCH_TYPE_STRATEGIES: Record<string, BatchTypeStrategy> = {
+  "General Product Ads": {
+    focus:
+      "Create a broad, varied mix of product-focused ad styles. Use every major ad format: lifestyle, product showcase, testimonial, unboxing, problem-solution, cinematic brand shot, hook-based social ad, and one unexpected wildcard creative.",
+    requiredAdTypes: [
+      "Lifestyle Product Shot",
+      "Product Showcase",
+      "Problem / Solution",
+      "Unboxing",
+      "Review / Testimonial",
+      "Cinematic Brand Shot",
+      "Hook-Based Social Ad",
+      "Wildcard Creative",
+    ],
+  },
+  "UGC Ads": {
+    focus:
+      "All 8 concepts must be authentic, creator-style UGC ads. Shoot in portrait, handheld, natural-light, real-person style. No polished studio production. Concepts should feel genuinely filmed by real customers or creators. Include testimonial, unboxing, problem/solution, demo, reaction, social proof, reasons-why, and lifestyle.",
+    requiredAdTypes: [
+      "UGC Selfie Testimonial",
+      "UGC Unboxing",
+      "UGC Problem / Solution",
+      "UGC Product Demo",
+      "UGC Review / Reaction",
+      "UGC Social Proof",
+      "UGC 3 Reasons Why",
+      "UGC Lifestyle Use Case",
+    ],
+  },
+  "Product Launch": {
+    focus:
+      "All 8 concepts must be launch-event-style ads. Build excitement, reveal, and urgency. Treat this as a launch campaign rollout: big reveal, teaser, first look, origin story, product benefits, founder angle, launch day energy, and limited-time push.",
+    requiredAdTypes: [
+      "Big Reveal",
+      "Coming Soon / Teaser",
+      "First Look",
+      "Why We Made This",
+      "Launch Day Energy",
+      "Product Benefits",
+      "Founder / Creator Style",
+      "Limited-Time Launch Push",
+    ],
+  },
+  "Ecommerce Product Ads": {
+    focus:
+      "All 8 concepts must be direct-response ecommerce ads. Every concept should drive a click or purchase. Use scroll-stopping hooks, clear product demos, benefit stacks, social proof, objection-busting, and strong CTAs.",
+    requiredAdTypes: [
+      "Scroll-Stopping Hook",
+      "Product Demo",
+      "Problem / Solution",
+      "Unboxing",
+      "Benefit Stack",
+      "Social Proof",
+      "Objection Crusher",
+      "Direct Response CTA",
+    ],
+  },
+  "App / Software Promo": {
+    focus:
+      "All 8 concepts must promote an app, SaaS, or software product. Show the app in use, the problem it solves, speed/convenience benefits, feature highlights, user reactions, and clear download/signup CTAs. No physical product shots.",
+    requiredAdTypes: [
+      "App Screen Demo",
+      "Problem / Workflow",
+      "Feature Highlight",
+      "Before / After Workflow",
+      "User Reaction",
+      "Speed / Convenience Demo",
+      "Use Case Story",
+      "CTA Download / Signup",
+    ],
+  },
+  "Local Business Ads": {
+    focus:
+      "All 8 concepts must be hyper-local business ads. Show real customers, the physical location, staff, services, community presence, local offers, and trust signals. Make it feel authentic and neighbourhood-level.",
+    requiredAdTypes: [
+      "Local Customer Story",
+      "Behind the Scenes",
+      "Service Demo",
+      "Trust / Proof",
+      "Location Spotlight",
+      "Offer / Promo",
+      "Community Angle",
+      "Review / Testimonial",
+    ],
+  },
+  "Faith / Ministry Reels": {
+    focus:
+      "All 8 concepts must be respectful, warm, and inviting faith or ministry content. Keep it positive, modern, and visually compelling. Avoid clichés. Include encouragement, testimony, scripture-inspired visuals, prayer moments, and a clear invitation.",
+    requiredAdTypes: [
+      "Question Hook",
+      "Encouragement Reel",
+      "Testimony Style",
+      "Prayer Moment",
+      "Scripture-Inspired Visual",
+      "Apparel / Product Lifestyle",
+      "Street / Everyday Faith",
+      "Invitation / CTA",
+    ],
+  },
+  "Viral Social Clips": {
+    focus:
+      "All 8 concepts must be engineered for maximum organic reach and sharing. Every concept should have a pattern interrupt, unexpected element, or emotional peak. Use viral formats: POV, relatable problems, curiosity hooks, fast montages, surprise endings, and shareable one-liners.",
+    requiredAdTypes: [
+      "Pattern Interrupt",
+      "Curiosity Hook",
+      "Unexpected Reveal",
+      "Fast Montage",
+      "POV Moment",
+      "Relatable Problem",
+      "Surprise Ending",
+      "Shareable One-Liner",
+    ],
+  },
+};
+
+// Fallback for unknown batch types
+const DEFAULT_STRATEGY: BatchTypeStrategy = BATCH_TYPE_STRATEGIES["General Product Ads"]!;
+
 // ─── Per-brand style guidance ─────────────────────────────────────────────────
 
 const NEUTRAL_BRAND_GUIDANCE =
@@ -72,8 +200,16 @@ const BRAND_GUIDANCE: Record<string, string> = {
 
 // ─── Build the OpenAI prompt ──────────────────────────────────────────────────
 
-function buildSystemPrompt(brandName: string, workspaceKey: string, batchType: string): string {
+function buildSystemPrompt(
+  brandName: string,
+  workspaceKey: string,
+  batchType: string,
+  strategy: BatchTypeStrategy,
+): string {
   const guidance = BRAND_GUIDANCE[workspaceKey] ?? NEUTRAL_BRAND_GUIDANCE;
+  const adTypeList = strategy.requiredAdTypes
+    .map((t, i) => `  ${i + 1}. ${t}`)
+    .join("\n");
 
   return `You are an expert short-form video concept writer specialising in social media ads and organic content for any type of brand, product, or service.
 
@@ -89,21 +225,26 @@ STRICT RULES — follow these exactly:
 2. Generate exactly 8 items in the "items" array.
 3. Each video concept is 8 seconds long, 9:16 vertical format.
 4. Do NOT invent logos, slogans, shirt text, product claims, pricing, or brand promises not present in the brief or reference images.
-5. Do NOT add religious, faith, or spiritual language unless the brand context or instruction specifically calls for it.
+5. Do NOT add religious, faith, or spiritual language unless the brand context, batch type, or instruction specifically calls for it.
 6. Do NOT mention AI in any video concept.
 7. Do NOT include end-card or outro instructions in promptText.
 8. Do NOT use placeholder words like "[product]" or "[your brand]".
-9. Each concept must be visually and thematically distinct — vary style, tone, setting, and approach.
-10. promptText must be Seedance-ready: subject, action, setting, camera movement, lighting. Under 300 characters.
-11. Caption must be social-ready with relevant hashtags and a call to action.
-12. PLATFORM RULE: Do NOT write concepts for a specific platform. Every concept must work for Instagram Reels, TikTok, YouTube Shorts, and Facebook Reels equally. Do not mention platform names in promptText.
-13. VIDEO STYLE VARIETY: Vary the style across the 8 concepts — use: UGC-style, lifestyle scene, product demo, testimonial-style, problem-solution, cinematic brand shot, hook-based social clip, unboxing/reveal.
-14. IMAGE TAG RULE — THIS IS MANDATORY: If reference images are provided with tags (e.g. @product1, @logo, @model1), every single promptText MUST explicitly include at least one of those exact tags written literally. You MUST NOT reference uploaded images without using their tag. You MUST NOT use generic substitutes like "the product", "the image", or "the shirt" instead of the tag. Write tags literally exactly as provided, for example:
+9. promptText must be Seedance-ready: subject, action, setting, camera movement, lighting. Under 300 characters.
+10. Caption must be social-ready with relevant hashtags and a call to action.
+11. PLATFORM RULE: Do NOT write concepts for a specific platform. Every concept must work for Instagram Reels, TikTok, YouTube Shorts, and Facebook Reels equally. Do not mention platform names in promptText.
+12. IMAGE TAG RULE — THIS IS MANDATORY: If reference images are provided with tags (e.g. @product1, @logo, @model1), every single promptText MUST explicitly include at least one of those exact tags written literally. You MUST NOT reference uploaded images without using their tag. You MUST NOT use generic substitutes like "the product", "the image", or "the shirt" instead of the tag. Write tags literally exactly as provided, for example:
     - BAD: "A person holds up a shirt in front of a white background."
     - GOOD: "Use @product1 as the exact product reference. A person holds up @product1 in front of a white background, close-up reveal, cinematic lighting."
     - GOOD (multiple tags): "@model1 holds @product1 against a golden hour backdrop, slow pull-back, shallow depth of field."
     If only one image is provided (e.g. @product1 only), every single promptText must include @product1.
     If multiple images exist, every promptText must include at minimum the primary product tag (the first one), plus additional tags where relevant.
+13. BATCH TYPE STRATEGY — THIS IS MANDATORY: The selected batch type is "${batchType}".
+    Creative focus: ${strategy.focus}
+    You MUST generate all 8 concepts strictly within this batch type. Do NOT mix in general lifestyle or cinematic concepts unless that is what this batch type calls for.
+    You MUST use these exact 8 ad type labels, in this exact order, one per item:
+${adTypeList}
+    Each item's "adType" field MUST match the corresponding label from the list above.
+    Do NOT substitute, skip, or reorder these ad types.
 
 JSON schema to return:
 {
@@ -111,11 +252,11 @@ JSON schema to return:
   "items": [
     {
       "title": "short concept title",
-      "adType": "one of: Hook, Testimonial, Product Demo, Lifestyle, UGC, Cinematic, Unboxing, Problem-Solution",
+      "adType": "must exactly match the required ad type for this position",
       "hook": "the first 3 seconds — what grabs attention immediately",
       "promptText": "Seedance-ready video generation prompt. Reference tagged images by their exact tag.",
       "caption": "social post caption with hashtags",
-      "reason": "1 sentence on why this concept works for this brand"
+      "reason": "1 sentence on why this concept works for this brand and batch type"
     }
   ]
 }`;
@@ -236,7 +377,9 @@ export async function POST(req: NextRequest) {
 
   const openai = new OpenAI({ apiKey });
 
-  const systemPrompt = buildSystemPrompt(brandName, workspaceKey, batchType);
+  const strategy = BATCH_TYPE_STRATEGIES[batchType] ?? DEFAULT_STRATEGY;
+
+  const systemPrompt = buildSystemPrompt(brandName, workspaceKey, batchType, strategy);
   const userPrompt = buildUserPrompt(instruction, referenceImages, referenceImageUrl);
 
   console.log(
@@ -291,6 +434,12 @@ export async function POST(req: NextRequest) {
 
   while (items.length < batchSize) {
     items.push(normaliseItem({}, items.length));
+  }
+
+  // Server-side enforce adType from strategy — GPT can miss/reorder these.
+  // We keep GPT's title/hook/promptText/caption but set adType deterministically.
+  for (let i = 0; i < items.length; i++) {
+    items[i].adType = strategy.requiredAdTypes[i] ?? items[i].adType;
   }
 
   // Server-side auto-fix: if GPT missed tags, prepend the primary tag reference.

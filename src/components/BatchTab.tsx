@@ -93,6 +93,17 @@ const BATCH_TYPES = [
   "Viral Social Clips",
 ];
 
+const BATCH_TYPE_DESCRIPTIONS: Record<string, string> = {
+  "General Product Ads":    "Broad mix: lifestyle, product showcase, testimonial, unboxing, hook, cinematic, and one wildcard creative.",
+  "UGC Ads":                "8 creator-style UGC prompts: selfie testimonial, unboxing, problem/solution, demo, reaction, social proof, 3-reasons-why, lifestyle use case.",
+  "Product Launch":         "Launch campaign arc: big reveal, teaser, first look, origin story, benefits, founder angle, launch day energy, limited-time push.",
+  "Ecommerce Product Ads":  "Direct-response formats: scroll hook, product demo, problem/solution, unboxing, benefit stack, social proof, objection crusher, strong CTA.",
+  "App / Software Promo":   "App/SaaS formats: screen demo, problem/workflow, feature highlight, before/after, user reaction, speed demo, use case story, download CTA.",
+  "Local Business Ads":     "Hyper-local formats: customer story, behind the scenes, service demo, trust/proof, location spotlight, offer, community, testimonial.",
+  "Faith / Ministry Reels": "Faith-based formats: question hook, encouragement, testimony, prayer moment, scripture visual, apparel lifestyle, everyday faith, invitation.",
+  "Viral Social Clips":     "Engineered for sharing: pattern interrupt, curiosity hook, unexpected reveal, fast montage, POV, relatable problem, surprise ending, one-liner.",
+};
+
 const DEFAULT_TAG_NAMES = [
   "@product1", "@product2", "@logo", "@model1", "@brandcard", "@endcard",
 ];
@@ -844,6 +855,9 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                     className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 outline-none focus:border-neutral-600 cursor-pointer disabled:opacity-50 [color-scheme:dark]">
                     {BATCH_TYPES.map(t => <option key={t} value={t} className="bg-neutral-900">{t}</option>)}
                   </select>
+                  {BATCH_TYPE_DESCRIPTIONS[batchType] && (
+                    <p className="text-[10px] text-neutral-600 leading-relaxed">{BATCH_TYPE_DESCRIPTIONS[batchType]}</p>
+                  )}
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <div className="flex flex-col gap-0.5">
