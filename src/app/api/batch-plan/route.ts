@@ -91,7 +91,7 @@ STRICT RULES — follow these exactly:
 10. promptText must be Seedance-ready: describe subject, action, setting, camera movement, and lighting concisely.
 11. Caption must be social-ready with relevant hashtags and a call to action.
 12. Keep promptText under 300 characters.
-13. For a General Brand Campaign batch type, create a diverse mix:
+13. For a General Product Ads batch type, create a diverse mix:
     UGC-style ad, product demo, lifestyle scene, testimonial-style, problem-solution, cinematic brand shot, hook-based social clip, wildcard viral concept.
 
 JSON schema to return:
@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
     workspaceKey = "gotjesus",
     brandName = "Got Jesus?",
     instruction,
-    batchType = "General Brand Campaign",
+    batchType = "General Product Ads",
     referenceImageUrl,
     batchSize: rawBatchSize,
   } = body;
