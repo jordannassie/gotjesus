@@ -235,3 +235,54 @@ create policy "service role delete content slots"
 --
 -- create index if not exists gotjesus_reels_deleted_at_idx
 --   on gotjesus_reels (deleted_at) where deleted_at is null;
+
+-- ─── Native social connections — future OAuth per brand ─────────────────────
+-- Stores one row per platform per workspace for native social connections.
+-- Currently unused by the app; populated when a brand connects a platform
+-- natively (OAuth). Until then all posting flows through Blotato.
+--
+-- provider values: 'blotato' (legacy/current) | 'native' (future OAuth)
+-- status values:   'not_connected' | 'connecting' | 'connected' | 'revoked' | 'error'
+-- platform values: 'instagram' | 'facebook' | 'tiktok' | 'youtube'
+
+create table if not exists social_connections (
+  id                        uuid        primary key default gen_random_uuid(),
+  created_at                timestamptz not null    default now(),
+  updated_at                timestamptz not null    default now(),
+  user_key                  text        not null    default 'demo_jordan',
+  workspace_key             text        not null    default 'gotjesus',
+  platform                  text        not null,
+  provider                  text        not null    default 'blotato',
+  account_name              text,
+  account_id                text,
+  status                    text        not null    default 'not_connected',
+  access_token_encrypted    text,
+  refresh_token_encrypted   text,
+  token_expires_at          timestamptz,
+  scopes                    jsonb       not null    default '[]'::jsonb,
+  metadata                  jsonb       not null    default '{}'::jsonb,
+  unique (workspace_key, platform, provider)
+);
+
+alter table social_connections enable row level security;
+
+create policy "service role select social connections"
+  on social_connections for select using (true);
+
+create policy "service role insert social connections"
+  on social_connections for insert with check (true);
+
+create policy "service role update social connections"
+  on social_connections for update using (true);
+
+create policy "service role delete social connections"
+  on social_connections for delete using (true);
+
+create index if not exists social_connections_workspace_key_idx
+  on social_connections (workspace_key);
+
+create index if not exists social_connections_platform_idx
+  on social_connections (platform);
+
+create index if not exists social_connections_provider_idx
+  on social_connections (provider);

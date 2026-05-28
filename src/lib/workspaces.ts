@@ -20,6 +20,8 @@ export interface Workspace {
   key: WorkspaceKey;
   name: string;
   description: string;
+  /** Optional logo URL for future custom brand switcher UI. */
+  logoUrl?: string;
 }
 
 export const WORKSPACES: Workspace[] = [
@@ -32,6 +34,7 @@ export const WORKSPACES: Workspace[] = [
     key: "ugcfire",
     name: "UGCFire",
     description: "UGC ads, creator content, and brand campaigns.",
+    logoUrl: "https://phhczohqidgrvcmszets.supabase.co/storage/v1/object/public/UGC%20Fire/images/UGCfirelog.png",
   },
   {
     key: "sellbop",

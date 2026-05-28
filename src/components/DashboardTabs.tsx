@@ -119,7 +119,7 @@ export default function DashboardTabs({ contentSlots, blotatoConnected, workspac
         ) : activeTab === "library" ? (
           <LibraryTab workspaceKey={workspaceKey} />
         ) : (
-          <ConnectionsTab blotatoConnected={blotatoConnected} />
+          <ConnectionsTab blotatoConnected={blotatoConnected} workspaceKey={workspaceKey} />
         )}
       </div>
     </div>
