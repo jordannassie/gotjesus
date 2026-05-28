@@ -361,3 +361,13 @@ create index if not exists campaign_items_batch_id_idx
   on campaign_items (batch_id);
 create index if not exists campaign_items_status_idx
   on campaign_items (status);
+
+-- ─── Batch source columns on gotjesus_reels ──────────────────────────────────
+-- Allow Library to show which reels came from the Batch engine vs Content Engine.
+-- All columns are nullable so existing rows are unaffected.
+
+alter table gotjesus_reels add column if not exists source           text    default 'content_engine';
+alter table gotjesus_reels add column if not exists batch_id         uuid;
+alter table gotjesus_reels add column if not exists campaign_item_id uuid;
+alter table gotjesus_reels add column if not exists ad_type          text;
+alter table gotjesus_reels add column if not exists hook             text;

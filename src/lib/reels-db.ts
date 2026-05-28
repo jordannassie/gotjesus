@@ -60,6 +60,12 @@ export interface Reel {
   posting_source: "manual" | "auto" | null;
   // Brand workspace this reel belongs to (default 'gotjesus')
   workspace_key: string;
+  // Batch campaign provenance — null for Content Engine reels
+  source: string | null;
+  batch_id: string | null;
+  campaign_item_id: string | null;
+  ad_type: string | null;
+  hook: string | null;
 }
 
 export type CreateReelInput = Partial<Reel> & {
@@ -142,6 +148,11 @@ export async function createReel(data: CreateReelInput): Promise<Reel> {
     deleted_at: data.deleted_at ?? null,
     posting_source: data.posting_source ?? null,
     workspace_key: data.workspace_key ?? "gotjesus",
+    source: data.source ?? null,
+    batch_id: data.batch_id ?? null,
+    campaign_item_id: data.campaign_item_id ?? null,
+    ad_type: data.ad_type ?? null,
+    hook: data.hook ?? null,
   };
 }
 

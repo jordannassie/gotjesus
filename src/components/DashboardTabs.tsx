@@ -127,7 +127,7 @@ export default function DashboardTabs({ contentSlots, blotatoConnected, workspac
         ) : activeTab === "engine" ? (
           <DailyContentEngine initialSlots={contentSlots} workspaceKey={workspaceKey} />
         ) : activeTab === "batch" ? (
-          <BatchTab workspaceKey={workspaceKey} />
+          <BatchTab workspaceKey={workspaceKey} onSwitchToLibrary={() => handleTabChange("library")} />
         ) : activeTab === "library" ? (
           <LibraryTab workspaceKey={workspaceKey} />
         ) : (

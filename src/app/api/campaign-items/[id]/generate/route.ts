@@ -2,20 +2,18 @@
  * POST /api/campaign-items/[id]/generate
  *
  * Starts Kie/Seedance video generation for a single saved campaign item.
+ * Follows the same pattern as the Content Engine:
+ *   - Loads campaign_item + parent batch for reference images
+ *   - Appends the active end-card URL (same as Content Engine)
+ *   - Submits job to Kie.ai via createVideoTaskWithImages()
+ *   - Stores kie_task_id and sets item status = 'generating'
+ *   - Returns { kieTaskId } for client-side polling
  *
- * Flow:
- *   1. Load campaign_items row by id.
- *   2. Load parent campaign_batches row to get reference_image_url.
- *   3. Set item status = 'generating'.
- *   4. Submit job to Kie.ai via createVideoTaskWithImages().
- *   5. Store kie_task_id on the item.
- *   6. Return { item, status, kieTaskId, videoUrl }.
+ * The client polls GET /api/generate-video?taskId=… until the video is ready,
+ * then calls POST /api/campaign-items/[id]/save-to-library to persist it.
  *
- * The client is responsible for polling GET /api/generate-video?taskId=… until
- * the video is ready. This route does NOT poll — it fires the job and returns.
- *
- * STRICT: does NOT call Blotato, does NOT write to gotjesus_reels/Library,
- * does NOT auto-post, does NOT change existing slot generation behavior.
+ * STRICT: does NOT call Blotato, does NOT write to gotjesus_reels,
+ * does NOT auto-post, does NOT change Content Engine behaviour.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -25,6 +23,7 @@ import {
   updateCampaignItem,
 } from "@/lib/campaign-batches";
 import { createVideoTaskWithImages } from "@/lib/kie";
+import { getActiveEndCardUrl } from "@/lib/brand-settings";
 
 export async function POST(
   _req: NextRequest,
@@ -42,20 +41,23 @@ export async function POST(
     return NextResponse.json({ error: "Campaign item not found." }, { status: 404 });
   }
 
-  // Prevent re-generating a completed item
-  if (item.status === "done" || item.status === "generating") {
+  // Prevent re-submitting a job that is already running or done
+  if (item.status === "generating") {
     return NextResponse.json(
-      {
-        item,
-        status: item.status,
-        kieTaskId: item.kie_task_id ?? null,
-        videoUrl: item.video_url ?? null,
-      },
+      { item, status: "generating", kieTaskId: item.kie_task_id, videoUrl: null },
+      { status: 409 }
+    );
+  }
+  if (item.status === "complete" || item.status === "done") {
+    return NextResponse.json(
+      { item, status: item.status, kieTaskId: item.kie_task_id, videoUrl: item.video_url },
       { status: 409 }
     );
   }
 
-  // 2 — Load the parent batch to get the reference image
+  // 2 — Build reference image list
+  //     batch.reference_image_url → filtered by Kie ratio check inside createVideoTaskWithImages
+  //     end-card URL appended last (same as Content Engine)
   let referenceImageUrls: string[] = [];
   if (item.batch_id) {
     const batch = await getCampaignBatchById(item.batch_id);
@@ -64,7 +66,10 @@ export async function POST(
     }
   }
 
-  // 3 — Mark as generating
+  const endCardUrl = await getActiveEndCardUrl();
+  if (endCardUrl) referenceImageUrls.push(endCardUrl);
+
+  // 3 — Mark item as generating
   try {
     await updateCampaignItem(id, { status: "generating" });
   } catch (error) {
@@ -89,28 +94,21 @@ export async function POST(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[campaign-items/generate] Kie.ai error for item ${id}:`, message);
-
-    // Roll back status to 'failed'
-    await updateCampaignItem(id, {
-      status: "failed",
-      error_message: message,
-    }).catch(() => {});
-
+    await updateCampaignItem(id, { status: "failed", error_message: message }).catch(() => {});
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  // 5 — Store the task id
+  // 5 — Persist task id
   try {
     await updateCampaignItem(id, { kie_task_id: taskId });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[campaign-items/generate] Could not save kie_task_id for ${id}:`, message);
-    // Non-fatal — the job is still running; the client can poll with the taskId from this response
+    // Non-fatal — the job is running; client can poll with the taskId from this response
   }
 
   console.log(`[campaign-items/generate] Item ${id} → Kie task ${taskId}`);
 
-  // 6 — Return the task id for the client to poll
   return NextResponse.json({
     item: { ...item, status: "generating", kie_task_id: taskId },
     status: "generating",
