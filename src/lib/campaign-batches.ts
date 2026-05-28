@@ -171,7 +171,19 @@ export async function createCampaignBatchWithItems(
 
   if (batchError) {
     console.error("[campaign-batches] campaign_batches insert error:", batchError);
-    throw new Error(`createCampaignBatch failed: ${serializeError(batchError)}`);
+    const errStr = serializeError(batchError);
+    const isPgrst204 =
+      errStr.includes("PGRST204") ||
+      errStr.toLowerCase().includes("could not find") ||
+      (batchError as unknown as Record<string, unknown>)["code"] === "PGRST204";
+    if (isPgrst204) {
+      throw new Error(
+        "Supabase column missing (PGRST204). Run this SQL:\n" +
+        "alter table campaign_batches add column if not exists post_caption text;\n" +
+        "alter table campaign_batches add column if not exists reference_images jsonb not null default '[]'::jsonb;"
+      );
+    }
+    throw new Error(`createCampaignBatch failed: ${errStr}`);
   }
 
   console.log(`[campaign-batches] Inserted batch ${batchId}`);

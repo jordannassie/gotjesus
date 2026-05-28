@@ -196,14 +196,13 @@ function ImageCard({ image, index, allTags, onUpdate, onRemove }: {
 
 // ─── Concept Card ─────────────────────────────────────────────────────────────
 
-function ConceptCard({ item, index, saved, itemId, genState, includeVoiceover, onGenerate, onDelete }: {
+function ConceptCard({ item, index, itemId, genState, includeVoiceover, onGenerate, onDelete }: {
   item: BatchItem;
   index: number;
-  saved: boolean;
-  itemId?: string;
+  itemId?: string;           // set after batch is saved to DB
   genState?: ItemGenState;
   includeVoiceover?: boolean;
-  onGenerate?: (itemId: string) => void;
+  onGenerate?: (index: number) => void;  // always available; auto-saves if needed
   onDelete?: (itemId: string) => void;
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
@@ -236,73 +235,73 @@ function ConceptCard({ item, index, saved, itemId, genState, includeVoiceover, o
             {includeVoiceover && (
               <span className="text-[10px] px-1.5 py-0.5 rounded border border-sky-900 text-sky-500">Talking / VO</span>
             )}
-            {saved
-              ? gsStatus === "done"
-                ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-900 text-emerald-500">Saved to Library ✓</span>
-                : gsStatus === "failed"
-                ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-900 text-red-500">Failed</span>
-                : isRunning
-                ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-900 text-amber-500">
-                    {gsStatus === "submitting" ? "Submitting…" : gsStatus === "saving" ? "Saving…" : "Generating…"}
-                  </span>
-                : <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-900 text-emerald-500">Saved</span>
+            {gsStatus === "done"
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-900 text-emerald-500">Saved to Library ✓</span>
+              : gsStatus === "failed"
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-900 text-red-500">Failed</span>
+              : isRunning
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-900 text-amber-500">
+                  {gsStatus === "submitting" ? "Saving & starting…" : gsStatus === "saving" ? "Saving to Library…" : "Generating…"}
+                </span>
+              : itemId
+              ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-900/60 text-emerald-600">Ready</span>
               : <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-600">Draft</span>
             }
           </div>
         </div>
 
-        {/* Controls — only after save */}
-        {saved && itemId && (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {/* Generate Video */}
-            {gsStatus === "done" ? (
-              <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-900">
-                <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-                Done
-              </span>
-            ) : gsStatus === "failed" ? (
-              <button type="button" onClick={() => onGenerate?.(itemId)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-red-900 text-[11px] font-medium text-red-400 hover:text-red-300 transition-colors">
-                Retry
-              </button>
-            ) : (
-              <button type="button"
-                onClick={() => !isRunning && onGenerate?.(itemId)}
-                disabled={isRunning}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors flex-shrink-0 ${
-                  isRunning
-                    ? "border-neutral-800 text-neutral-600 cursor-wait"
-                    : "border-neutral-600 text-neutral-300 hover:text-white hover:border-neutral-400"
-                }`}
-              >
-                {isRunning ? (
-                  <>
-                    <span className="w-2.5 h-2.5 rounded-full animate-spin inline-block"
-                      style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />
-                    {gsStatus === "submitting" ? "Starting…" : gsStatus === "saving" ? "Saving…" : "Generating…"}
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                    </svg>
-                    Generate Video
-                  </>
-                )}
-              </button>
-            )}
+        {/* Controls — always visible; Generate Video auto-saves if needed */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Generate Video / status */}
+          {gsStatus === "done" ? (
+            <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-900">
+              <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              Done
+            </span>
+          ) : gsStatus === "failed" ? (
+            <button type="button" onClick={() => onGenerate?.(index)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-red-900 text-[11px] font-medium text-red-400 hover:text-red-300 transition-colors">
+              Retry
+            </button>
+          ) : (
+            <button type="button"
+              onClick={() => !isRunning && onGenerate?.(index)}
+              disabled={isRunning}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors flex-shrink-0 ${
+                isRunning
+                  ? "border-neutral-800 text-neutral-600 cursor-wait"
+                  : "border-neutral-600 text-neutral-300 hover:text-white hover:border-neutral-400"
+              }`}
+            >
+              {isRunning ? (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full animate-spin inline-block"
+                    style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />
+                  {gsStatus === "submitting" ? "Starting…" : gsStatus === "saving" ? "Saving…" : "Generating…"}
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                  </svg>
+                  Generate Video
+                </>
+              )}
+            </button>
+          )}
 
-            {/* Delete */}
+          {/* Delete — only after batch is saved to DB */}
+          {itemId && (
             <button type="button" onClick={handleDelete} disabled={isDeleting || isRunning}
               className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors disabled:opacity-40">
               <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
               </svg>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="px-4 py-4 flex flex-col gap-3">
@@ -534,7 +533,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
 
   // ── Create 8 prompts ──────────────────────────────────────────────────────────
 
-  const canCreatePrompts = chatGptInstruction.trim().length > 0 && !isGenerating && !isSaving;
+  const canCreatePrompts = chatGptInstruction.trim().length > 0 && !isGenerating;
 
   const handleCreatePrompts = useCallback(async () => {
     if (!canCreatePrompts) return;
@@ -568,10 +567,13 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     }
   }, [workspaceKey, brandName, chatGptInstruction, batchType, referenceImages, firstImageUrl, batchSize, includeVoiceover, officialEndCardEnabled, canCreatePrompts]);
 
-  // ── Save batch ────────────────────────────────────────────────────────────────
+  // ── Auto-save helper — called before any generation ──────────────────────────
+  // Returns savedBatchData immediately if already saved, otherwise POSTs to API.
 
-  const handleSave = useCallback(async () => {
-    if (!batchPlan || isSaving || savedBatchData) return;
+  const ensureBatchSaved = useCallback(async (): Promise<{ batchId: string; itemIds: string[] }> => {
+    if (savedBatchData) return savedBatchData;
+    if (!batchPlan) throw new Error("No prompts to save. Generate prompts first.");
+
     setIsSaving(true);
     setSaveError("");
     try {
@@ -598,13 +600,17 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
         throw new Error(msg);
       }
       if (!data.batch?.id) throw new Error("Save succeeded but batch ID was missing.");
-      setSavedBatchData({ batchId: data.batch.id, itemIds: (data.items ?? []).map(it => it.id) });
+      const saved = { batchId: data.batch.id, itemIds: (data.items ?? []).map(it => it.id) };
+      setSavedBatchData(saved);
+      return saved;
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed.");
+      const msg = err instanceof Error ? err.message : "Auto-save failed.";
+      setSaveError(msg);
+      throw new Error(msg);
     } finally {
       setIsSaving(false);
     }
-  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, chatGptInstruction, firstImageUrl, postCaption, referenceImages]);
+  }, [savedBatchData, batchPlan, workspaceKey, brandName, chatGptInstruction, firstImageUrl, postCaption, referenceImages]);
 
   // ── Per-item generation ───────────────────────────────────────────────────────
 
@@ -664,7 +670,14 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
       });
   };
 
-  const handleGenerateItem = useCallback(async (itemId: string) => {
+  const handleGenerateItem = useCallback(async (index: number) => {
+    // Auto-save first so we have the real itemId
+    let saved: { batchId: string; itemIds: string[] };
+    try { saved = await ensureBatchSaved(); } catch { return; }
+
+    const itemId = saved.itemIds[index];
+    if (!itemId) return;
+
     const current = itemGenStates[itemId]?.status;
     if (current === "submitting" || current === "generating" || current === "saving" || current === "done") return;
     setItemGenStates(prev => ({ ...prev, [itemId]: { status: "submitting" } }));
@@ -690,21 +703,26 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     } catch (err) {
       setItemGenStates(prev => ({ ...prev, [itemId]: { status: "failed", error: err instanceof Error ? err.message : "Submit error." } }));
     }
-  }, [itemGenStates, stopItemPoll]);
+  }, [ensureBatchSaved, itemGenStates, stopItemPoll]);
 
   // ── Run All Videos (sequential) ───────────────────────────────────────────────
 
   const handleRunAll = useCallback(async () => {
-    if (!savedBatchData || isRunningAll) return;
-    const pending = savedBatchData.itemIds.filter((id, i) => {
+    if (!batchPlan || isRunningAll) return;
+    setIsRunningAll(true);
+    runAllCancelRef.current = false;
+
+    // Auto-save before any generation
+    let saved: { batchId: string; itemIds: string[] };
+    try { saved = await ensureBatchSaved(); } catch { setIsRunningAll(false); return; }
+
+    const pending = saved.itemIds.filter((id) => {
       if (!id) return false;
       if (deletedItemIds.includes(id)) return false;
       const st = itemGenStates[id]?.status;
       return st !== "done" && st !== "generating" && st !== "saving" && st !== "submitting";
     });
-    if (pending.length === 0) return;
-    setIsRunningAll(true);
-    runAllCancelRef.current = false;
+    if (pending.length === 0) { setIsRunningAll(false); return; }
     setRunAllProgress({ done: 0, total: pending.length });
 
     for (let i = 0; i < pending.length; i++) {
@@ -767,7 +785,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
 
     setIsRunningAll(false);
     setRunAllProgress(null);
-  }, [savedBatchData, isRunningAll, deletedItemIds, itemGenStates, saveItemToLibrary]);
+  }, [batchPlan, isRunningAll, deletedItemIds, itemGenStates, saveItemToLibrary, ensureBatchSaved]);
 
   // ── Delete batch ──────────────────────────────────────────────────────────────
 
@@ -1091,15 +1109,24 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              {!savedBatchData && (
-                <button type="button" onClick={handleSave} disabled={isSaving}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${isSaving ? "bg-neutral-800 text-neutral-500 cursor-wait" : "bg-white text-black hover:bg-neutral-200"}`}>
-                  {isSaving
-                    ? <><span className="w-3.5 h-3.5 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />Saving…</>
-                    : <><svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V6h5a2 2 0 012 2v7a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h5v5.586l-1.293-1.293zM9 4a1 1 0 012 0v2H9V4z" /></svg>Save Batch</>
-                  }
-                </button>
-              )}
+              {/* Run Batch — auto-saves then generates all pending items */}
+              <button type="button" onClick={handleRunAll}
+                disabled={isSaving || isRunningAll || isGenerating}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  isSaving || isRunningAll
+                    ? "bg-neutral-800 text-neutral-500 cursor-wait"
+                    : isGenerating
+                    ? "bg-neutral-800 text-neutral-600 cursor-not-allowed opacity-60"
+                    : "bg-white text-black hover:bg-neutral-200"
+                }`}>
+                {isSaving ? (
+                  <><span className="w-3.5 h-3.5 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />Saving…</>
+                ) : isRunningAll ? (
+                  <><span className="w-3.5 h-3.5 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />{runAllProgress ? `Generating ${runAllProgress.done + 1} / ${runAllProgress.total}…` : "Generating…"}</>
+                ) : (
+                  <><svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>Run Batch</>
+                )}
+              </button>
               <button type="button" onClick={handleNewBatch} className="text-xs text-neutral-600 hover:text-neutral-300 transition-colors border border-neutral-800 rounded-lg px-3 py-1.5">
                 New Batch
               </button>
@@ -1114,51 +1141,33 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
             </div>
           )}
 
-          {/* Save error */}
+          {/* Auto-save / error status */}
           {saveError && (
             <div className="rounded-xl border border-red-900 bg-red-950/30 px-4 py-3 flex flex-col gap-1.5">
-              <p className="text-xs font-semibold text-red-400">Save failed</p>
+              <p className="text-xs font-semibold text-red-400">Auto-save failed</p>
               <p className="text-xs text-red-500">{saveError}</p>
               {isSqlMissingError(saveError) && (
-                <p className="text-[11px] text-amber-500 border-t border-red-900/50 pt-1.5">
-                  <strong>SQL required:</strong> Run the <code className="font-mono">campaign_batches</code> and <code className="font-mono">campaign_items</code> migrations in your Supabase SQL editor.
-                </p>
+                <div className="text-[11px] text-amber-400 border-t border-red-900/50 pt-1.5 flex flex-col gap-1">
+                  <strong>SQL required — run in Supabase SQL editor:</strong>
+                  <code className="font-mono bg-neutral-900 rounded px-2 py-1 text-[10px] text-amber-300 whitespace-pre-wrap">
+                    {`alter table campaign_batches add column if not exists post_caption text;\nalter table campaign_batches add column if not exists reference_images jsonb not null default '[]'::jsonb;`}
+                  </code>
+                </div>
               )}
             </div>
           )}
 
-          {/* Batch action bar */}
+          {/* Batch action bar — shown after save */}
           {savedBatchData && (
             <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-1.5">
-                {isRunningAll && runAllProgress ? (
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />
-                    <span className="text-xs font-semibold text-amber-400">Generating {runAllProgress.done + 1} of {runAllProgress.total}…</span>
-                  </div>
-                ) : completeCount > 0 ? (
-                  <span className="text-xs font-semibold text-emerald-400">{completeCount} video{completeCount !== 1 ? "s" : ""} complete</span>
+                {completeCount > 0 ? (
+                  <span className="text-xs font-semibold text-emerald-400">{completeCount} video{completeCount !== 1 ? "s" : ""} saved to Library</span>
                 ) : (
-                  <span className="text-xs font-semibold text-emerald-400">Batch saved · ready to generate</span>
+                  <span className="text-xs text-neutral-500">Batch auto-saved · videos saved to Library, nothing posts automatically.</span>
                 )}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Run All Videos */}
-                <button type="button" onClick={handleRunAll}
-                  disabled={isRunningAll || isDeletingBatch}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
-                    isRunningAll || isDeletingBatch
-                      ? "border-neutral-800 text-neutral-600 cursor-wait opacity-60"
-                      : "border-neutral-600 text-neutral-300 hover:text-white hover:border-neutral-400"
-                  }`}
-                >
-                  {isRunningAll ? (
-                    <><span className="w-2.5 h-2.5 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />Running…</>
-                  ) : (
-                    <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>Run All Videos</>
-                  )}
-                </button>
-
                 {/* Go to Library */}
                 {anyDone && onSwitchToLibrary && (
                   <button type="button" onClick={onSwitchToLibrary}
@@ -1167,7 +1176,6 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                     Go to Library
                   </button>
                 )}
-
                 {/* Delete Batch */}
                 <button type="button" onClick={handleDeleteBatch} disabled={isDeletingBatch || isRunningAll}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-neutral-800 text-xs font-semibold text-neutral-500 hover:text-red-400 hover:border-red-900 transition-colors disabled:opacity-50 disabled:cursor-wait">
@@ -1203,7 +1211,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                 if (itemId && deletedItemIds.includes(itemId)) return null;
                 return (
                   <ConceptCard key={i} item={item} index={i}
-                    saved={!!savedBatchData} itemId={itemId}
+                    itemId={itemId}
                     genState={itemId ? itemGenStates[itemId] : undefined}
                     includeVoiceover={batchPlan.includeVoiceover}
                     onGenerate={handleGenerateItem}
@@ -1220,10 +1228,9 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
           ) : null}
 
           {!savedBatchData && visibleCount > 0 && (
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 px-5 py-4 flex items-start gap-3">
-              <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-              <div><span className="text-xs font-semibold text-neutral-300">Review before saving.</span><p className="text-xs text-neutral-500 mt-0.5">Save the batch to enable per-prompt video generation.</p></div>
-            </div>
+            <p className="text-[11px] text-neutral-700 text-center">
+              Batch auto-saves when you click <span className="text-neutral-500">Run Batch</span> or <span className="text-neutral-500">Generate Video</span>. Nothing posts automatically.
+            </p>
           )}
         </div>
       )}
