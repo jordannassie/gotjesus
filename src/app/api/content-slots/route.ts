@@ -28,6 +28,8 @@ export async function GET(req: NextRequest) {
 // POST /api/content-slots
 // Creates a new content slot. Body is optional overrides for default values.
 // Also handles Duplicate Section — pass overrides with source slot's data.
+// workspaceKey in body determines which brand the slot belongs to.
+// Defaults to "gotjesus" when missing so old callers without it still work.
 export async function POST(req: NextRequest) {
   try {
     let overrides: Partial<ContentSlot> = {};
@@ -37,7 +39,8 @@ export async function POST(req: NextRequest) {
       // empty body → use all defaults
     }
 
-    const slot = await createContentSlot("gotjesus", overrides);
+    const workspaceKey = overrides.workspaceKey ?? "gotjesus";
+    const slot = await createContentSlot(workspaceKey, overrides);
     return NextResponse.json(slot);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

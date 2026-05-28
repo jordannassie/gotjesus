@@ -58,6 +58,8 @@ export interface Reel {
   deleted_at: string | null;
   // 'manual' = Post Now button, 'auto' = scheduler, null = not yet posted
   posting_source: "manual" | "auto" | null;
+  // Brand workspace this reel belongs to (default 'gotjesus')
+  workspace_key: string;
 }
 
 export type CreateReelInput = Partial<Reel> & {
@@ -139,6 +141,7 @@ export async function createReel(data: CreateReelInput): Promise<Reel> {
     content_slot_name: data.content_slot_name ?? null,
     deleted_at: data.deleted_at ?? null,
     posting_source: data.posting_source ?? null,
+    workspace_key: data.workspace_key ?? "gotjesus",
   };
 }
 
@@ -171,12 +174,16 @@ export async function getReel(id: string): Promise<Reel | null> {
   return (data as Reel) ?? null;
 }
 
-export async function getRecentReels(limit = 50): Promise<Reel[]> {
+export async function getRecentReels(
+  limit = 50,
+  workspaceKey = "gotjesus"
+): Promise<Reel[]> {
   const supabase = getClient();
   const { data, error } = await supabase
     .from("gotjesus_reels")
     .select("*")
     .is("deleted_at", null) // exclude soft-deleted
+    .eq("workspace_key", workspaceKey)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) {

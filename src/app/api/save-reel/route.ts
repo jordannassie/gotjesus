@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
     contentSlotKey?: string;
     contentSlotName?: string;
     postCaption?: string;
+    workspaceKey?: string;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -42,6 +43,7 @@ export async function POST(req: NextRequest) {
     contentSlotKey,
     contentSlotName,
     postCaption,
+    workspaceKey = "gotjesus",
   } = body;
 
   if (!kieVideoUrl)
@@ -87,6 +89,7 @@ export async function POST(req: NextRequest) {
       youtube_enabled: platforms.includes("youtube"),
       content_slot_key: contentSlotKey ?? null,
       content_slot_name: contentSlotName ?? null,
+      workspace_key: workspaceKey,
     });
     console.log(`[save-reel route] Created reel row ${reelId}`);
   } catch (err) {

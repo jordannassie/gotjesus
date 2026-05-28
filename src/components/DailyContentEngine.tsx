@@ -6,9 +6,10 @@ import type { ContentSlot } from "@/lib/content-slots";
 
 interface Props {
   initialSlots: ContentSlot[];
+  workspaceKey: string;
 }
 
-export default function DailyContentEngine({ initialSlots }: Props) {
+export default function DailyContentEngine({ initialSlots, workspaceKey }: Props) {
   const [slots, setSlots] = useState<ContentSlot[]>(initialSlots);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
@@ -23,7 +24,11 @@ export default function DailyContentEngine({ initialSlots }: Props) {
     setAdding(true);
     setAddError("");
     try {
-      const res = await fetch("/api/content-slots", { method: "POST" });
+      const res = await fetch("/api/content-slots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceKey }),
+      });
       const data = (await res.json()) as ContentSlot & { error?: string };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setSlots((prev) => [...prev, data]);
@@ -32,7 +37,7 @@ export default function DailyContentEngine({ initialSlots }: Props) {
     } finally {
       setAdding(false);
     }
-  }, []);
+  }, [workspaceKey]);
 
   // ── Duplicate a slot ─────────────────────────────────────────────────────
   const handleDuplicateSlot = useCallback(async (source: ContentSlot) => {
@@ -43,6 +48,7 @@ export default function DailyContentEngine({ initialSlots }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          workspaceKey,
           slotName: `${source.slotName} — Copy`,
           promptText: source.promptText,
           postCaption: source.postCaption ?? "",
@@ -63,7 +69,7 @@ export default function DailyContentEngine({ initialSlots }: Props) {
     } finally {
       setAdding(false);
     }
-  }, []);
+  }, [workspaceKey]);
 
   // ── Delete a slot ─────────────────────────────────────────────────────────
   const handleDeleteSlot = useCallback(async (id: string) => {

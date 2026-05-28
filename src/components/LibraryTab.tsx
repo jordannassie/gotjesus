@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Reel } from "@/lib/reels-db";
+import { getWorkspaceName } from "@/lib/workspaces";
 
 type PostNowStatus = "idle" | "posting" | "done" | "error";
 
@@ -425,7 +426,7 @@ function ReelLibraryCard({
 
 // ─── Library Tab ──────────────────────────────────────────────────────────────
 
-export default function LibraryTab() {
+export default function LibraryTab({ workspaceKey = "gotjesus" }: { workspaceKey?: string }) {
   const [reels, setReels] = useState<Reel[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
@@ -435,12 +436,12 @@ export default function LibraryTab() {
   const fetchReels = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/reels");
+      const res = await fetch(`/api/reels?workspaceKey=${encodeURIComponent(workspaceKey)}`);
       if (res.ok) setReels((await res.json()) as Reel[]);
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, []);
+  }, [workspaceKey]);
 
   useEffect(() => { void fetchReels(); }, [fetchReels]);
 
@@ -482,6 +483,13 @@ export default function LibraryTab() {
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Workspace label */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-600">Library</span>
+        <span className="text-[10px] text-neutral-700">—</span>
+        <span className="text-[10px] font-semibold text-neutral-400">{getWorkspaceName(workspaceKey)}</span>
+      </div>
+
       {/* Filter bar */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-1.5">

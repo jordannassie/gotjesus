@@ -8,9 +8,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRecentReels, updateReel } from "@/lib/reels-db";
 import { deleteReelFile } from "@/lib/reel-storage";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const workspaceKey = req.nextUrl.searchParams.get("workspaceKey") ?? "gotjesus";
   try {
-    const reels = await getRecentReels(50);
+    const reels = await getRecentReels(50, workspaceKey);
     return NextResponse.json(reels);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

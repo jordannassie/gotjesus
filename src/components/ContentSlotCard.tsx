@@ -251,6 +251,7 @@ export default function ContentSlotCard({
                 contentSlotKey: slot.slotKey,
                 contentSlotName: slotName,
                 postCaption: postCaption || undefined,
+                workspaceKey: slot.workspaceKey,
               }),
             });
           } catch { /* non-fatal */ }
