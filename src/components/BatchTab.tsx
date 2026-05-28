@@ -11,7 +11,14 @@ interface BatchDraft {
   chatGptInstruction?: string;
   batchType?: string;
   useChatGPT?: boolean;
+  includeVoiceover?: boolean;
 }
+
+// Batch types where voiceover defaults to ON (mirrors batch-plan/route.ts)
+const VOICEOVER_DEFAULT_ON = new Set([
+  "UGC Ads", "Ecommerce Product Ads", "Product Launch", "Viral Social Clips",
+  "App / Software Promo", "Local Business Ads", "Faith / Ministry Reels",
+]);
 
 function draftKey(workspaceKey: string) {
   return `reel_batch_draft:${workspaceKey}`;
@@ -65,6 +72,7 @@ interface BatchPlanResponse {
   workspaceKey: string;
   brandName: string;
   batchType: string;
+  includeVoiceover: boolean;
   items: BatchItem[];
 }
 
@@ -167,12 +175,13 @@ function ImageCard({ image, index, allTags, onChange, onRemove }: {
 
 // ─── Concept Card ─────────────────────────────────────────────────────────────
 
-function ConceptCard({ item, index, saved, itemId, genState, onGenerate, onDelete }: {
+function ConceptCard({ item, index, saved, itemId, genState, includeVoiceover, onGenerate, onDelete }: {
   item: BatchItem;
   index: number;
   saved: boolean;
   itemId?: string;
   genState?: ItemGenState;
+  includeVoiceover?: boolean;
   onGenerate?: (itemId: string) => void;
   onDelete?: (itemId: string) => void;
 }) {
@@ -203,6 +212,9 @@ function ConceptCard({ item, index, saved, itemId, genState, onGenerate, onDelet
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-700 text-neutral-400">{item.adType}</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-600">{item.durationSeconds}s · {item.aspectRatio}</span>
+            {includeVoiceover && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-sky-900 text-sky-500">Talking / VO</span>
+            )}
             {saved
               ? gsStatus === "done"
                 ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-900 text-emerald-500">Saved to Library ✓</span>
@@ -358,6 +370,16 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     "Make every type of short-form ad this brand would actually need."
   );
   const [batchType, setBatchType] = useState(BATCH_TYPES[0]);
+  const [includeVoiceover, setIncludeVoiceover] = useState(false); // loaded from draft or batchType default
+
+  // Auto-update voiceover default when batch type changes (unless user already has a draft)
+  const voiceoverUserOverride = useRef(false);
+  const handleBatchTypeChange = useCallback((type: string) => {
+    setBatchType(type);
+    if (!voiceoverUserOverride.current) {
+      setIncludeVoiceover(VOICEOVER_DEFAULT_ON.has(type));
+    }
+  }, []);
 
   // ── Batch plan ───────────────────────────────────────────────────────────────
   const [isGenerating, setIsGenerating] = useState(false);
@@ -406,12 +428,20 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     if (typeof draft.useChatGPT === "boolean") {
       setUseChatGPT(draft.useChatGPT);
     }
+    if (typeof draft.includeVoiceover === "boolean") {
+      setIncludeVoiceover(draft.includeVoiceover);
+      voiceoverUserOverride.current = true; // treat draft value as an explicit user setting
+    } else {
+      // No saved preference — apply the smart default for whatever batchType was loaded
+      const loadedType = draft.batchType ?? BATCH_TYPES[0];
+      setIncludeVoiceover(VOICEOVER_DEFAULT_ON.has(loadedType));
+    }
   }, [workspaceKey]);
 
   // ── Draft persistence: auto-save whenever relevant state changes ──────────
   useEffect(() => {
-    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT });
-  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT]);
+    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover });
+  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -481,6 +511,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
           instruction: chatGptInstruction.trim(), batchType,
           referenceImages: referenceImages.map(({ tag, name, url }) => ({ tag, name, url })),
           referenceImageUrl: firstImageUrl || undefined, batchSize: 8,
+          includeVoiceover,
         }),
       });
       const data = (await res.json()) as BatchPlanResponse & { error?: string };
@@ -851,13 +882,30 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
               <div className="flex flex-col gap-4 mt-1 pt-2 border-t border-neutral-800/60">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Batch Type</label>
-                  <select value={batchType} onChange={e => setBatchType(e.target.value)} disabled={isGenerating}
+                  <select value={batchType} onChange={e => handleBatchTypeChange(e.target.value)} disabled={isGenerating}
                     className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 outline-none focus:border-neutral-600 cursor-pointer disabled:opacity-50 [color-scheme:dark]">
                     {BATCH_TYPES.map(t => <option key={t} value={t} className="bg-neutral-900">{t}</option>)}
                   </select>
                   {BATCH_TYPE_DESCRIPTIONS[batchType] && (
                     <p className="text-[10px] text-neutral-600 leading-relaxed">{BATCH_TYPE_DESCRIPTIONS[batchType]}</p>
                   )}
+                </div>
+
+                {/* Voiceover toggle */}
+                <div className="flex items-center justify-between gap-3 py-3 border-t border-neutral-800/60">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Include Talking / Voiceover</span>
+                    <p className="text-[10px] text-neutral-700 max-w-xs">
+                      {includeVoiceover
+                        ? "Prompts include spoken hook, product line, and CTA. Creator speaks naturally on camera."
+                        : "Visual-only prompts. No spoken lines. Ambient audio or music only."}
+                    </p>
+                  </div>
+                  <button type="button" role="switch" aria-checked={includeVoiceover}
+                    onClick={() => { voiceoverUserOverride.current = true; setIncludeVoiceover(v => !v); }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer ml-2 ${includeVoiceover ? "bg-sky-500" : "bg-neutral-700"}`}>
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${includeVoiceover ? "translate-x-4" : "translate-x-1"}`} />
+                  </button>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <div className="flex flex-col gap-0.5">
@@ -1031,6 +1079,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                   <ConceptCard key={i} item={item} index={i}
                     saved={!!savedBatchData} itemId={itemId}
                     genState={itemId ? itemGenStates[itemId] : undefined}
+                    includeVoiceover={batchPlan.includeVoiceover}
                     onGenerate={handleGenerateItem}
                     onDelete={handleDeleteItem}
                   />

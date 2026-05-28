@@ -49,6 +49,7 @@ export interface BatchPlanResponse {
   workspaceKey: string;
   brandName: string;
   batchType: string;
+  includeVoiceover: boolean;
   items: BatchItem[];
 }
 
@@ -205,11 +206,25 @@ function buildSystemPrompt(
   workspaceKey: string,
   batchType: string,
   strategy: BatchTypeStrategy,
+  includeVoiceover: boolean,
 ): string {
   const guidance = BRAND_GUIDANCE[workspaceKey] ?? NEUTRAL_BRAND_GUIDANCE;
   const adTypeList = strategy.requiredAdTypes
     .map((t, i) => `  ${i + 1}. ${t}`)
     .join("\n");
+
+  const voiceoverRule = includeVoiceover
+    ? `14. VOICEOVER / TALKING RULE — THIS IS MANDATORY: Every promptText must include short spoken lines in double quotation marks directed at a real person/creator. The prompt must describe the creator speaking naturally.
+    Required in every promptText:
+    a) An opening spoken hook in quotes — e.g. "This just changed my morning routine."
+    b) One product or context line in quotes — e.g. "I've been wearing this for two weeks straight."
+    c) A closing CTA line in quotes — e.g. "Tap to grab yours." or "Link is in bio."
+    d) Visual action description (what we see on screen)
+    e) Camera direction (handheld, selfie cam, close-up, slow pull-back, etc.)
+    f) Audio direction: natural creator voice, clear speech, casual conversational tone, no music overlay
+    GOOD example: Use @product1 as the exact product reference. Creator holds @product1 toward camera and says, "This is my new favorite tee." Quick cut to them wearing it outside, they smile and say, "It goes with everything." They point to camera and say, "Tap to grab yours." Selfie cam, bright natural daylight, authentic handheld UGC style.
+    BAD example (no speech): A person walks down the street holding a shirt. Cinematic. Slow motion. — WRONG because there is no spoken hook.`
+    : `14. VISUAL-ONLY RULE: promptText should describe visual action, setting, camera movement, and lighting only. Do not include spoken lines or dialogue. Specify ambient audio or background music only.`;
 
   return `You are an expert short-form video concept writer specialising in social media ads and organic content for any type of brand, product, or service.
 
@@ -217,6 +232,7 @@ Brand context:
 - Brand name: ${brandName}
 - Batch type: ${batchType}
 - Brand style guidance: ${guidance}
+- Include voiceover/talking: ${includeVoiceover ? "YES — every prompt must include spoken lines" : "NO — visual-only prompts"}
 
 Your job is to generate exactly 8 video concepts for Seedance 2.0 AI video generation.
 
@@ -229,7 +245,7 @@ STRICT RULES — follow these exactly:
 6. Do NOT mention AI in any video concept.
 7. Do NOT include end-card or outro instructions in promptText.
 8. Do NOT use placeholder words like "[product]" or "[your brand]".
-9. promptText must be Seedance-ready: subject, action, setting, camera movement, lighting. Under 300 characters.
+9. promptText must be Seedance-ready. ${includeVoiceover ? "Include spoken lines as described in rule 14. Under 500 characters." : "Subject, action, setting, camera movement, lighting. Under 300 characters."}
 10. Caption must be social-ready with relevant hashtags and a call to action.
 11. PLATFORM RULE: Do NOT write concepts for a specific platform. Every concept must work for Instagram Reels, TikTok, YouTube Shorts, and Facebook Reels equally. Do not mention platform names in promptText.
 12. IMAGE TAG RULE — THIS IS MANDATORY: If reference images are provided with tags (e.g. @product1, @logo, @model1), every single promptText MUST explicitly include at least one of those exact tags written literally. You MUST NOT reference uploaded images without using their tag. You MUST NOT use generic substitutes like "the product", "the image", or "the shirt" instead of the tag. Write tags literally exactly as provided, for example:
@@ -245,6 +261,7 @@ STRICT RULES — follow these exactly:
 ${adTypeList}
     Each item's "adType" field MUST match the corresponding label from the list above.
     Do NOT substitute, skip, or reorder these ad types.
+${voiceoverRule}
 
 JSON schema to return:
 {
@@ -254,7 +271,7 @@ JSON schema to return:
       "title": "short concept title",
       "adType": "must exactly match the required ad type for this position",
       "hook": "the first 3 seconds — what grabs attention immediately",
-      "promptText": "Seedance-ready video generation prompt. Reference tagged images by their exact tag.",
+      "promptText": "Seedance-ready video generation prompt. ${includeVoiceover ? "Must include spoken lines in double quotes." : "Visual description only."}",
       "caption": "social post caption with hashtags",
       "reason": "1 sentence on why this concept works for this brand and batch type"
     }
@@ -340,6 +357,7 @@ export async function POST(req: NextRequest) {
     referenceImages?: ReferenceImage[];
     referenceImageUrl?: string;
     batchSize?: number;
+    includeVoiceover?: boolean;
   };
 
   try {
@@ -347,6 +365,12 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
+
+  // Batch types where voiceover defaults to ON (all except General Product Ads)
+  const VOICEOVER_DEFAULT_ON_TYPES = new Set([
+    "UGC Ads", "Ecommerce Product Ads", "Product Launch", "Viral Social Clips",
+    "App / Software Promo", "Local Business Ads", "Faith / Ministry Reels",
+  ]);
 
   const {
     workspaceKey = "gotjesus",
@@ -356,7 +380,14 @@ export async function POST(req: NextRequest) {
     referenceImages = [],
     referenceImageUrl,
     batchSize: rawBatchSize,
+    includeVoiceover,
   } = body;
+
+  // If includeVoiceover is not explicitly sent, apply the smart default
+  const resolvedVoiceover: boolean =
+    typeof includeVoiceover === "boolean"
+      ? includeVoiceover
+      : VOICEOVER_DEFAULT_ON_TYPES.has(batchType);
 
   if (!instruction || instruction.trim().length === 0) {
     return NextResponse.json(
@@ -379,12 +410,12 @@ export async function POST(req: NextRequest) {
 
   const strategy = BATCH_TYPE_STRATEGIES[batchType] ?? DEFAULT_STRATEGY;
 
-  const systemPrompt = buildSystemPrompt(brandName, workspaceKey, batchType, strategy);
+  const systemPrompt = buildSystemPrompt(brandName, workspaceKey, batchType, strategy, resolvedVoiceover);
   const userPrompt = buildUserPrompt(instruction, referenceImages, referenceImageUrl);
 
   console.log(
     `[batch-plan] Requesting ${batchSize} concepts for workspace=${workspaceKey} ` +
-    `brand="${brandName}" refImages=${referenceImages.length}`
+    `brand="${brandName}" refImages=${referenceImages.length} voiceover=${resolvedVoiceover}`
   );
 
   let rawContent = "";
@@ -442,6 +473,20 @@ export async function POST(req: NextRequest) {
     items[i].adType = strategy.requiredAdTypes[i] ?? items[i].adType;
   }
 
+  // Server-side auto-fix: if voiceover is on and GPT returned no quoted speech,
+  // append a minimal spoken hook + CTA so Seedance still gets voice direction.
+  if (resolvedVoiceover) {
+    for (const item of items) {
+      const hasQuotedSpeech = item.promptText.includes('"') || item.promptText.includes("\u2018") || item.promptText.includes("\u2019") || item.promptText.includes("\u201c") || item.promptText.includes("\u201d");
+      if (!hasQuotedSpeech && item.promptText.trim().length > 0) {
+        item.promptText =
+          item.promptText.trimEnd() +
+          ` Creator says, "You've got to see this." Ends with, "Check it out today." Natural conversational voice, casual delivery.`;
+        console.log(`[batch-plan] Auto-fixed voiceover for "${item.title}"`);
+      }
+    }
+  }
+
   // Server-side auto-fix: if GPT missed tags, prepend the primary tag reference.
   // This guarantees every promptText references at least one uploaded image.
   if (referenceImages.length > 0) {
@@ -461,6 +506,7 @@ export async function POST(req: NextRequest) {
     workspaceKey,
     brandName,
     batchType,
+    includeVoiceover: resolvedVoiceover,
     items,
   };
 
