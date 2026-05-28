@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import { getWorkspaceName } from "@/lib/workspaces";
 
-// ─── Types (mirror /api/batch-plan — defined locally to stay client-safe) ────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface BatchItem {
   title: string;
@@ -27,7 +27,7 @@ interface BatchPlanResponse {
   items: BatchItem[];
 }
 
-// Per-item generation state — tracked client-side while the card polls Kie
+// Per-item generation state — infrastructure for future generation step
 type ItemGenStatus = "idle" | "submitting" | "generating" | "done" | "failed";
 interface ItemGenState {
   status: ItemGenStatus;
@@ -35,9 +35,6 @@ interface ItemGenState {
   videoUrl?: string;
   error?: string;
 }
-
-const ITEM_POLL_INTERVAL_MS = 6000;
-const ITEM_MAX_POLLS = 120;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -66,17 +63,25 @@ function ConceptCard({
   saved,
   itemId,
   genState,
-  onGenerate,
+  onDelete,
 }: {
   item: BatchItem;
   index: number;
   saved: boolean;
   itemId?: string;
   genState?: ItemGenState;
-  onGenerate?: (itemId: string) => void;
+  onDelete?: (itemId: string) => void;
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
   const [captionOpen, setCaptionOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDelete = useCallback(async () => {
+    if (!itemId || isDeleting) return;
+    if (!confirm("Delete this concept? This cannot be undone.")) return;
+    setIsDeleting(true);
+    onDelete?.(itemId);
+  }, [itemId, isDeleting, onDelete]);
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
@@ -100,78 +105,84 @@ function ConceptCard({
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-600">
               {item.durationSeconds}s · {item.aspectRatio}
             </span>
-            {saved && (
+            {/* Status badge */}
+            {saved ? (
               <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-900 text-emerald-500">
                 Saved
+              </span>
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-600">
+                Draft
               </span>
             )}
           </div>
         </div>
 
-        {/* Per-item generate button — only after save */}
-        {saved && itemId && (() => {
-          const gs = genState;
-          const gsStatus = gs?.status ?? "idle";
-          const isRunning = gsStatus === "submitting" || gsStatus === "generating";
+        {/* Per-card controls (only after save) */}
+        {saved && itemId && (
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* Generate Video — disabled until next step */}
+            {(() => {
+              const gs = genState;
+              const gsStatus = gs?.status ?? "idle";
+              const isRunning = gsStatus === "submitting" || gsStatus === "generating";
 
-          if (gsStatus === "done" && gs?.videoUrl) {
-            return (
-              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-900 flex-shrink-0">
-                <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-                Video ready
-              </span>
-            );
-          }
+              if (gsStatus === "done" && gs?.videoUrl) {
+                return (
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-900 flex-shrink-0">
+                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    Video ready
+                  </span>
+                );
+              }
 
-          if (gsStatus === "failed") {
-            return (
-              <button
-                type="button"
-                onClick={() => onGenerate?.(itemId)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-red-900 text-[11px] font-medium text-red-400 hover:text-red-300 hover:border-red-700 transition-colors flex-shrink-0"
-                title={gs?.error ?? "Generation failed — click to retry"}
-              >
-                Retry
-              </button>
-            );
-          }
+              return (
+                <button
+                  type="button"
+                  disabled={isRunning || true}
+                  title="Video generation coming next step"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 text-[11px] font-medium text-neutral-700 cursor-not-allowed opacity-60 flex-shrink-0"
+                >
+                  {isRunning ? (
+                    <>
+                      <span
+                        className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
+                        style={{
+                          border: "2px solid transparent",
+                          borderTopColor: "#a3e635",
+                          borderRightColor: "#22d3ee",
+                        }}
+                      />
+                      {gsStatus === "submitting" ? "Starting…" : "Generating…"}
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                      </svg>
+                      Generate Video
+                    </>
+                  )}
+                </button>
+              );
+            })()}
 
-          return (
+            {/* Delete item */}
             <button
               type="button"
-              onClick={() => !isRunning && onGenerate?.(itemId)}
-              disabled={isRunning}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium flex-shrink-0 transition-colors ${
-                isRunning
-                  ? "border-neutral-800 text-neutral-600 cursor-wait"
-                  : "border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500"
-              }`}
+              onClick={handleDelete}
+              disabled={isDeleting}
+              title="Delete this concept"
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors flex-shrink-0 disabled:opacity-40"
             >
-              {isRunning ? (
-                <>
-                  <span
-                    className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
-                    style={{
-                      border: "2px solid transparent",
-                      borderTopColor: "#a3e635",
-                      borderRightColor: "#22d3ee",
-                    }}
-                  />
-                  {gsStatus === "submitting" ? "Starting…" : "Generating…"}
-                </>
-              ) : (
-                <>
-                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                  </svg>
-                  Generate Video
-                </>
-              )}
+              <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
             </button>
-          );
-        })()}
+          </div>
+        )}
       </div>
 
       <div className="px-4 py-4 flex flex-col gap-3">
@@ -227,7 +238,7 @@ function ConceptCard({
           )}
         </div>
 
-        {/* Generation status */}
+        {/* Generation status (future step) */}
         {genState && genState.status !== "idle" && (
           <div className="mt-1">
             {(genState.status === "submitting" || genState.status === "generating") && (
@@ -297,16 +308,16 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     itemIds: string[];
   } | null>(null);
 
-  // ── Per-item video generation ───────────────────────────────────────────────
-  const [itemGenStates, setItemGenStates] = useState<Record<string, ItemGenState>>({});
-  const itemTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const itemPollCounts = useRef<Record<string, number>>({});
+  // ── Delete state ────────────────────────────────────────────────────────────
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
+  const [deleteBatchError, setDeleteBatchError] = useState("");
+  const [deletedItemIds, setDeletedItemIds] = useState<string[]>([]);
 
-  // Cleanup timers on unmount
-  useEffect(() => {
-    const timers = itemTimers.current;
-    return () => { Object.values(timers).forEach(clearTimeout); };
-  }, []);
+  // Refs used by generation (wired to UI in next step)
+  const itemTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // ── Per-item video generation state (displayed in cards; generation wired in next step)
+  const [itemGenStates] = useState<Record<string, ItemGenState>>({});
 
   // ── Image upload handler ────────────────────────────────────────────────────
 
@@ -346,7 +357,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     setGenerateError("");
     setBatchPlan(null);
     setSavedBatchData(null);
-    setItemGenStates({});
+    setDeletedItemIds([]);
     try {
       const res = await fetch("/api/batch-plan", {
         method: "POST",
@@ -424,102 +435,88 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     } finally {
       setIsSaving(false);
     }
-  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, chatGptInstruction, batchType, referenceImageUrl]);
+  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, chatGptInstruction, referenceImageUrl]);
 
-  // ── Per-item generation helpers ─────────────────────────────────────────────
+  // ── Delete batch ────────────────────────────────────────────────────────────
 
-  const stopItemPoll = useCallback((itemId: string) => {
-    if (itemTimers.current[itemId]) {
-      clearTimeout(itemTimers.current[itemId]);
-      delete itemTimers.current[itemId];
+  const handleDeleteBatch = useCallback(async () => {
+    if (!savedBatchData || isDeletingBatch) return;
+    if (!confirm("Delete this entire batch and all its concepts? This cannot be undone.")) return;
+    setIsDeletingBatch(true);
+    setDeleteBatchError("");
+    try {
+      const res = await fetch(
+        `/api/campaign-batches/${encodeURIComponent(savedBatchData.batchId)}`,
+        { method: "DELETE" }
+      );
+      const data = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !data.success) {
+        throw new Error(data.error ?? `Delete failed (HTTP ${res.status})`);
+      }
+      // Clear timers, reset to new-batch state (keep image)
+      Object.values(itemTimers.current).forEach(clearTimeout);
+      itemTimers.current = {};
+      setBatchPlan(null);
+      setSavedBatchData(null);
+      setDeletedItemIds([]);
+      setGenerateError("");
+      setSaveError("");
+    } catch (err) {
+      setDeleteBatchError(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setIsDeletingBatch(false);
     }
-  }, []);
+  }, [savedBatchData, isDeletingBatch]);
 
-  const pollItemGen = useCallback(
-    (itemId: string, taskId: string) => {
-      if ((itemPollCounts.current[itemId] ?? 0) >= ITEM_MAX_POLLS) {
-        stopItemPoll(itemId);
-        setItemGenStates((prev) => ({
-          ...prev,
-          [itemId]: { ...prev[itemId], status: "failed", error: "Generation timed out." },
-        }));
-        return;
-      }
-      itemPollCounts.current[itemId] = (itemPollCounts.current[itemId] ?? 0) + 1;
-      fetch(`/api/generate-video?taskId=${encodeURIComponent(taskId)}`)
-        .then((r) => r.json() as Promise<{ state?: string; videoUrl?: string | null; failMsg?: string | null; error?: string }>)
-        .then((data) => {
-          if (data.error) {
-            stopItemPoll(itemId);
-            setItemGenStates((prev) => ({ ...prev, [itemId]: { ...prev[itemId], status: "failed", error: data.error } }));
-            return;
-          }
-          const state = data.state ?? "waiting";
-          if (state === "success" && data.videoUrl) {
-            stopItemPoll(itemId);
-            setItemGenStates((prev) => ({ ...prev, [itemId]: { status: "done", kieTaskId: taskId, videoUrl: data.videoUrl! } }));
-            return;
-          }
-          if (state === "fail") {
-            stopItemPoll(itemId);
-            setItemGenStates((prev) => ({ ...prev, [itemId]: { ...prev[itemId], status: "failed", error: data.failMsg ?? "Kie generation failed." } }));
-            return;
-          }
-          itemTimers.current[itemId] = setTimeout(() => pollItemGen(itemId, taskId), ITEM_POLL_INTERVAL_MS);
-        })
-        .catch((err) => {
-          stopItemPoll(itemId);
-          setItemGenStates((prev) => ({ ...prev, [itemId]: { ...prev[itemId], status: "failed", error: err instanceof Error ? err.message : "Poll error." } }));
-        });
-    },
-    [stopItemPoll]
-  );
+  // ── Delete single item ──────────────────────────────────────────────────────
 
-  const handleGenerateItem = useCallback(
+  const handleDeleteItem = useCallback(
     async (itemId: string) => {
-      let shouldProceed = false;
-      setItemGenStates((prev) => {
-        const current = prev[itemId]?.status;
-        if (current === "submitting" || current === "generating" || current === "done") return prev;
-        shouldProceed = true;
-        return { ...prev, [itemId]: { status: "submitting" } };
-      });
-      if (!shouldProceed) return;
-      stopItemPoll(itemId);
-      itemPollCounts.current[itemId] = 0;
       try {
-        const res = await fetch(`/api/campaign-items/${encodeURIComponent(itemId)}/generate`, { method: "POST" });
-        const data = (await res.json()) as { kieTaskId?: string; error?: string };
-        if (!res.ok || !data.kieTaskId) {
-          setItemGenStates((prev) => ({ ...prev, [itemId]: { status: "failed", error: data.error ?? "Failed to start generation." } }));
-          return;
+        const res = await fetch(
+          `/api/campaign-items/${encodeURIComponent(itemId)}`,
+          { method: "DELETE" }
+        );
+        const data = (await res.json()) as { success?: boolean; error?: string };
+        if (!res.ok || !data.success) {
+          console.error("[BatchTab] Delete item failed:", data.error);
         }
-        const kieTaskId = data.kieTaskId;
-        setItemGenStates((prev) => ({ ...prev, [itemId]: { status: "generating", kieTaskId } }));
-        itemTimers.current[itemId] = setTimeout(() => pollItemGen(itemId, kieTaskId), ITEM_POLL_INTERVAL_MS);
       } catch (err) {
-        setItemGenStates((prev) => ({ ...prev, [itemId]: { status: "failed", error: err instanceof Error ? err.message : "Submit error." } }));
+        console.error("[BatchTab] Delete item error:", err);
+      } finally {
+        // Remove from UI regardless of API result
+        setDeletedItemIds((prev) => [...prev, itemId]);
       }
     },
-    [stopItemPoll, pollItemGen]
+    []
   );
 
-  // ── Reset ────────────────────────────────────────────────────────────────────
+  // Generation helpers will be wired to UI buttons in the next step.
 
-  const handleReset = useCallback(() => {
+  // ── New Batch — keeps image, clears plan/results ─────────────────────────────
+
+  const handleNewBatch = useCallback(() => {
     Object.values(itemTimers.current).forEach(clearTimeout);
     itemTimers.current = {};
-    itemPollCounts.current = {};
     setBatchPlan(null);
     setGenerateError("");
     setSaveError("");
     setSavedBatchData(null);
-    setItemGenStates({});
-    setReferenceImageUrl("");
-    setUploadedImageName("");
-    setUploadError("");
-    setShowUrlFallback(false);
+    setDeletedItemIds([]);
+    setDeleteBatchError("");
+    // Image is intentionally preserved — user may want a new prompt on the same product.
   }, []);
+
+  // ── Derived ──────────────────────────────────────────────────────────────────
+
+  // Items visible in UI — excludes items the user has deleted
+  const visibleItems = batchPlan
+    ? batchPlan.items.filter((_, i) => {
+        const itemId = savedBatchData?.itemIds[i];
+        return !itemId || !deletedItemIds.includes(itemId);
+      })
+    : [];
+
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -793,13 +790,16 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
       {/* ChatGPT results — 8 concept cards */}
       {batchPlan && (
         <div className="flex flex-col gap-4">
+
           {/* Results header */}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-600">8 Prompts Ready</span>
+              <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-600">
+                {visibleItems.length} / {batchPlan.items.length} Prompts
+              </span>
               <h3 className="text-sm font-bold text-white">{batchPlan.batchTitle}</h3>
               <span className="text-[10px] text-neutral-600">
-                {batchPlan.batchType} · {batchPlan.items.length} concepts · {brandName}
+                {batchPlan.batchType} · {brandName}
               </span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -832,17 +832,9 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                   )}
                 </button>
               )}
-              {savedBatchData && (
-                <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 px-3 py-2 rounded-xl border border-emerald-900 bg-emerald-950/30">
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                  Batch saved. Ready to generate videos.
-                </span>
-              )}
               <button
                 type="button"
-                onClick={handleReset}
+                onClick={handleNewBatch}
                 className="text-xs text-neutral-600 hover:text-neutral-300 transition-colors border border-neutral-800 rounded-lg px-3 py-1.5"
               >
                 New Batch
@@ -850,6 +842,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
             </div>
           </div>
 
+          {/* Save error */}
           {saveError && (
             <div className="rounded-xl border border-red-900 bg-red-950/30 px-4 py-3">
               <p className="text-xs font-semibold text-red-400 mb-0.5">Save failed</p>
@@ -857,25 +850,100 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
             </div>
           )}
 
-          {/* Concept cards grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {batchPlan.items.map((item, i) => {
-              const itemId = savedBatchData?.itemIds[i];
-              return (
-                <ConceptCard
-                  key={i}
-                  item={item}
-                  index={i}
-                  saved={!!savedBatchData}
-                  itemId={itemId}
-                  genState={itemId ? itemGenStates[itemId] : undefined}
-                  onGenerate={handleGenerateItem}
-                />
-              );
-            })}
-          </div>
+          {/* Batch action bar — shown after save */}
+          {savedBatchData && (
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                <span className="text-xs font-semibold text-emerald-400">
+                  Batch saved · {visibleItems.length} concepts ready
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Run All Videos — disabled until next step */}
+                <button
+                  type="button"
+                  disabled
+                  title="Video generation coming next step"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-neutral-800 text-xs font-semibold text-neutral-700 cursor-not-allowed opacity-60"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                  </svg>
+                  Run All Videos
+                </button>
 
-          {!savedBatchData && (
+                {/* Delete Batch */}
+                <button
+                  type="button"
+                  onClick={handleDeleteBatch}
+                  disabled={isDeletingBatch}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-neutral-800 text-xs font-semibold text-neutral-500 hover:text-red-400 hover:border-red-900 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {isDeletingBatch ? (
+                    <>
+                      <span
+                        className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
+                        style={{ border: "2px solid transparent", borderTopColor: "#ef4444", borderRightColor: "#ef4444" }}
+                      />
+                      Deleting…
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      Delete Batch
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Delete batch error */}
+          {deleteBatchError && (
+            <div className="rounded-xl border border-red-900 bg-red-950/30 px-4 py-3">
+              <p className="text-xs font-semibold text-red-400 mb-0.5">Delete failed</p>
+              <p className="text-xs text-red-500 leading-relaxed">{deleteBatchError}</p>
+            </div>
+          )}
+
+          {/* Concept cards grid */}
+          {visibleItems.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {batchPlan.items.map((item, i) => {
+                const itemId = savedBatchData?.itemIds[i];
+                if (itemId && deletedItemIds.includes(itemId)) return null;
+                return (
+                  <ConceptCard
+                    key={i}
+                    item={item}
+                    index={i}
+                    saved={!!savedBatchData}
+                    itemId={itemId}
+                    genState={itemId ? itemGenStates[itemId] : undefined}
+                    onDelete={handleDeleteItem}
+                  />
+                );
+              })}
+            </div>
+          ) : savedBatchData ? (
+            <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/30 px-6 py-10 flex flex-col items-center justify-center gap-3 text-center">
+              <p className="text-sm text-neutral-600">All concepts deleted.</p>
+              <button
+                type="button"
+                onClick={handleNewBatch}
+                className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors border border-neutral-800 rounded-lg px-3 py-1.5"
+              >
+                Start New Batch
+              </button>
+            </div>
+          ) : null}
+
+          {!savedBatchData && visibleItems.length > 0 && (
             <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 px-5 py-4 flex items-start gap-3">
               <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
@@ -920,3 +988,4 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     </div>
   );
 }
+
