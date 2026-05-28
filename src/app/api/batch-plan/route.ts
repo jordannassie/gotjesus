@@ -14,10 +14,11 @@
  *   brandName         string    optional  default "Got Jesus?"
  *   instruction       string   REQUIRED  campaign brief
  *   batchType         string    optional  "UGC Ads" | "General Reels" — default "General Reels"
- *   referenceImages   Array<{ tag, name?, url }>  optional  tagged reference images
- *   referenceImageUrl string    optional  legacy single-image fallback
- *   batchSize         number    optional  1–8, default 4
- *   includeVoiceover  boolean   optional  smart default by batch type
+ *   referenceImages       Array<{ tag, info?, name?, url }>  optional  tagged reference images
+ *   referenceImageUrl     string    optional  legacy single-image fallback
+ *   batchSize             number    optional  1–8, default 4
+ *   includeVoiceover      boolean   optional  smart default by batch type
+ *   officialEndCardEnabled boolean  optional  if true, prompts cover main 7s only
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -27,6 +28,7 @@ import OpenAI from "openai";
 
 export interface ReferenceImage {
   tag: string;
+  info?: string;
   name?: string;
   url: string;
 }
@@ -52,7 +54,7 @@ export interface BatchPlanResponse {
   batchType: string;
   batchSize: number;
   includeVoiceover: boolean;
-  hasEndCardInstruction: boolean;
+  officialEndCardEnabled: boolean;
   items: BatchItem[];
 }
 
@@ -150,7 +152,8 @@ function buildSystemPrompt(
   batchSize: number,
   selectedPlays: string[],
   includeVoiceover: boolean,
-  hasEndCardInstruction: boolean,
+  effectiveEndCard: boolean,
+  allowedTagList: string,   // comma-separated list of uploaded tags, or "" if none
 ): string {
   const guidance = BRAND_GUIDANCE[workspaceKey] ?? NEUTRAL_BRAND_GUIDANCE;
   const isUgc = batchType === "UGC Ads";
@@ -193,16 +196,22 @@ STRICT RULES — follow every single one:
 4. Do NOT invent logos, slogans, shirt text, product claims, pricing, or brand promises not present in the brief or reference images.
 5. Do NOT add religious, faith, or spiritual language unless the brand context or instruction specifically calls for it.
 6. Do NOT mention AI in any video concept.
-7. Do NOT include end-card, logo-card, outro, or text-card instructions in promptText. ${hasEndCardInstruction ? "The user has requested an official end card. Do NOT generate or describe the end card inside Seedance. The application appends the official 1-second end card automatically after the generated video. Write promptText only for the main reel content before the end card." : ""}
+7. Do NOT include end-card, logo-card, outro, or text-card instructions in promptText. ${effectiveEndCard ? "The user has requested an official end card. Do NOT generate or describe the end card inside Seedance. The application appends the official 1-second end card automatically after the generated video. Write promptText only for the main reel content before the end card." : ""}
 8. Do NOT use placeholder words like "[product]" or "[your brand]".
 9. promptText must be Seedance-ready. ${includeVoiceover ? "Include spoken lines as described in rule 13. Under 500 characters." : "Subject, action, setting, camera movement, lighting. Under 400 characters."}
 10. Caption is for social posting only — do NOT put captions, hashtags, or post text in promptText.
 11. PLATFORM RULE: Do NOT write concepts for a specific platform. Every concept must work for Instagram Reels, TikTok, YouTube Shorts, and Facebook Reels equally.
-12. IMAGE TAG RULE — MANDATORY: If reference images are provided with tags (e.g. @product1, @logo, @model1), every single promptText MUST include at least one tag literally. Never substitute "the product", "the shirt", or "the image" for the tag. Examples:
+12. IMAGE TAG RULE — MANDATORY: If reference images are provided with tags, every single promptText MUST include at least one tag literally. Never substitute "the product", "the shirt", or "the image" for the tag. Examples:
     - BAD: "A person holds up a shirt in front of a white background."
     - GOOD: "Use @product1 as the exact product reference. Creator holds up @product1, close-up reveal, cinematic lighting."
     - GOOD: "@model1 holds @product1 against golden hour backdrop, slow pull-back, shallow depth of field."
     Every promptText must contain at least one of the provided image tags.
+    TAG ACCURACY — STRICT: You may ONLY use tags from this exact list: ${allowedTagList || "none — no reference images uploaded"}. Do NOT invent or guess any other @ tags.
+    - If @model1 is NOT in the list, do NOT use @model1. Instead write "a creator", "a person", or "a model" (no @ symbol).
+    - If @logo is NOT in the list, do NOT reference @logo or any logo tag.
+    - If @product2 is NOT in the list, do NOT use @product2. Use @product1 (if available) for all product references.
+    - Do NOT use @brandcard, @endcard, @model2, or any tag not in the list above.
+    - If the list contains only @product1, use only @product1 in every promptText.
 ${voiceoverRule}
 14. NO TEXT OVERLAY RULE — MANDATORY: Never ask Seedance to show captions, subtitles, text overlays, hook text on screen, CTA text on screen, logo cards, fake end cards, or any extra words on screen. Do NOT include instructions like "text on screen says", "caption reads", "overlay text", "show the word", "logo appears", or similar. Video must be clean — no on-screen text whatsoever.
 15. CREATIVE MODE: ${creativeModeFocus}
@@ -212,7 +221,7 @@ ${playsListText}
     - Do NOT substitute, skip, or reorder these ad plays.
     - Do NOT create more or fewer than ${batchSize} items.
 17. TIMING STRUCTURE: Each promptText should briefly describe what happens at three phases:
-    ${hasEndCardInstruction
+    ${effectiveEndCard
       ? "Opening (0–2 sec), Middle (2–5 sec), Closing (5–7 sec). IMPORTANT: Write only for the main 7 seconds. The official 1-second end card is appended automatically by the app — do not describe or generate it inside this prompt."
       : "Opening (0–2 sec), Middle (2–5 sec), Closing (5–8 sec). Keep it concise."}
 18. CAMPAIGN BRIEF RULE — MANDATORY: The Campaign Brief is the user's primary creative instruction. You MUST extract concrete requirements from it and apply them to every promptText where relevant.
@@ -222,8 +231,8 @@ ${playsListText}
     - Brief says "no talking" → override voiceover rule, make all prompts visual-only
     - Brief says "UGC style" → make all prompts feel handheld, phone-shot, creator-style
     - Brief says "official end card" → write main reel content only; app appends the end card
-    Do not ignore the brief. Do not output generic prompts that ignore the brief's intent.${hasEndCardInstruction ? `
-19. END CARD RULE — MANDATORY (detected in campaign brief): Do NOT generate, describe, or reference any end card, logo card, text card, or branded outro inside any promptText. The application automatically appends the official 1-second branded end card after the generated video. Your job is to write the Seedance prompt for the main reel content only. Every promptText must include this exact sentence at the end: "The official end card is appended automatically by the app; do not generate an end card inside Seedance."` : ""}
+    Do not ignore the brief. Do not output generic prompts that ignore the brief's intent.${effectiveEndCard ? `
+19. END CARD RULE — MANDATORY: Do NOT generate, describe, or reference any end card, logo card, text card, or branded outro inside any promptText. The application automatically appends the official 1-second branded end card after the generated video. Your job is to write the Seedance prompt for the main reel content only. Every promptText must include this exact sentence at the end: "The official end card is appended automatically by the app; do not generate an end card inside Seedance."` : ""}
 
 JSON schema to return:
 {
@@ -233,7 +242,7 @@ JSON schema to return:
       "title": "short concept title",
       "adType": "must exactly match the ad play for this position",
       "hook": "the first 2 seconds — what grabs attention",
-      "promptText": "Full Seedance-ready prompt${hasEndCardInstruction ? " for main 7-second reel only (app appends end card)" : ""}. ${includeVoiceover ? "Include spoken lines in double quotes." : "Visual description only."} Must end with: ${hasEndCardInstruction ? "The official end card is appended automatically by the app; do not generate an end card inside Seedance. " : ""}No captions, no subtitles, no text overlays, no extra words on screen, no fake logos, no fake end cards, do not alter product design.",
+      "promptText": "Full Seedance-ready prompt${effectiveEndCard ? " for main 7-second reel only (app appends end card)" : ""}. ${includeVoiceover ? "Include spoken lines in double quotes." : "Visual description only."} Must end with: ${effectiveEndCard ? "The official end card is appended automatically by the app; do not generate an end card inside Seedance. " : ""}No captions, no subtitles, no text overlays, no extra words on screen, no fake logos, no fake end cards, do not alter product design. Only use image tags from: ${allowedTagList || "none"}.",
       "caption": "social post caption with hashtags — for posting only, NOT for the video",
       "reason": "1 sentence on why this ad play works for this brand"
     }
@@ -252,19 +261,26 @@ function buildUserPrompt(
   if (referenceImages.length > 0) {
     const tagList = referenceImages.map((img) => img.tag).join(", ");
     const imageList = referenceImages
-      .map((img) => `  - ${img.tag}: ${img.name ?? "image"}`)
+      .map((img) => {
+        const desc = img.info?.trim() || img.name?.trim() || "reference image";
+        return `  - ${img.tag}: ${desc}`;
+      })
       .join("\n");
     imageSection = `
 
 Uploaded reference images (use these EXACT tags in every promptText):
 ${imageList}
 
+Available tags: ${tagList}
+You may ONLY use the tags listed above. Do not create new @tags. Do not use @model1, @logo, @product2, or any tag not in the list.
+
 MANDATORY TAG RULES:
 1. Every single promptText MUST contain at least one of these tags written literally: ${tagList}
-2. Never say "the product", "the shirt", or "the image" — use the exact tag (e.g. ${referenceImages[0].tag}) instead.
-3. Primary tag: ${referenceImages[0].tag}. If unsure which to use, use ${referenceImages[0].tag}.
-4. You may combine tags in one prompt (e.g. "@model1 wearing @product1").
-5. Do not invent product details, text, or design elements not described in the brief.`;
+2. Never say "the product", "the shirt", or "the image" — use the exact tag (e.g. ${referenceImages[0]!.tag}) instead.
+3. Primary tag: ${referenceImages[0]!.tag}. If unsure which to use, use ${referenceImages[0]!.tag}.
+4. You may combine tags in one prompt only if both tags are in the available list above.
+5. Do not invent product details, text, or design elements not described in the brief.
+6. Use the tag description above to understand what the image represents — respect it accurately.`;
   } else if (legacyImageUrl) {
     imageSection = `
 
@@ -274,7 +290,7 @@ Use the visual content of this image as the anchor for all ${batchSize} concepts
 
   const tagReminder =
     referenceImages.length > 0
-      ? `\n\nFINAL REMINDER: Every promptText MUST include at least one image tag (${referenceImages.map((i) => i.tag).join(", ")}). This is non-negotiable.`
+      ? `\n\nFINAL REMINDER: Every promptText MUST include at least one tag from this list: ${referenceImages.map((i) => i.tag).join(", ")}. Do NOT invent or use any other @tags. This is non-negotiable.`
       : "";
 
   return `Campaign brief: ${instruction}${imageSection}${tagReminder}
@@ -319,6 +335,7 @@ export async function POST(req: NextRequest) {
     referenceImageUrl?: string;
     batchSize?: number;
     includeVoiceover?: boolean;
+    officialEndCardEnabled?: boolean;
   };
 
   try {
@@ -336,6 +353,7 @@ export async function POST(req: NextRequest) {
     referenceImageUrl,
     batchSize: rawBatchSize,
     includeVoiceover,
+    officialEndCardEnabled: bodyEndCardEnabled,
   } = body;
 
   // Voiceover defaults to ON for UGC Ads, OFF for General Reels
@@ -375,13 +393,20 @@ export async function POST(req: NextRequest) {
 
   const openai = new OpenAI({ apiKey });
 
-  const hasEndCardInstruction = detectEndCardInstruction(instruction.trim());
-  if (hasEndCardInstruction) {
-    console.log("[batch-plan] End card instruction detected — prompts will cover main content only");
+  const briefHasEndCard = detectEndCardInstruction(instruction.trim());
+  // officialEndCardEnabled from client takes priority; fall back to brief detection
+  const effectiveEndCard: boolean =
+    typeof bodyEndCardEnabled === "boolean" ? bodyEndCardEnabled : briefHasEndCard;
+
+  if (effectiveEndCard) {
+    console.log(`[batch-plan] End card enabled (explicit=${typeof bodyEndCardEnabled === "boolean"}) — prompts will cover main content only`);
   }
 
+  const allowedTagList = referenceImages.map((img) => img.tag).join(", ");
+
   const systemPrompt = buildSystemPrompt(
-    brandName, workspaceKey, batchType, batchSize, selectedPlays, resolvedVoiceover, hasEndCardInstruction
+    brandName, workspaceKey, batchType, batchSize, selectedPlays,
+    resolvedVoiceover, effectiveEndCard, allowedTagList,
   );
   const userPrompt = buildUserPrompt(instruction, batchSize, referenceImages, referenceImageUrl);
 
@@ -454,7 +479,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 3. Image tag auto-fix: prepend primary tag if all tags are missing
+  // 2.5 Invented-tag cleanup: remove or replace any @ tags GPT invented that weren't uploaded
+  if (referenceImages.length > 0) {
+    const allowedTags = new Set(referenceImages.map((img) => img.tag.toLowerCase()));
+    const primaryTag = referenceImages[0]!.tag;
+    for (const item of items) {
+      const tagMatches = item.promptText.match(/@[a-zA-Z0-9_-]+/g);
+      if (tagMatches) {
+        for (const tag of tagMatches) {
+          if (!allowedTags.has(tag.toLowerCase())) {
+            const lower = tag.toLowerCase();
+            let replacement: string;
+            if (lower.includes("model") || lower.includes("person") || lower.includes("creator") || lower.includes("actor")) {
+              replacement = "a creator";
+            } else if (lower.includes("logo")) {
+              replacement = "the brand";
+            } else if (lower.includes("endcard") || lower.includes("end_card") || lower.includes("end-card")) {
+              replacement = ""; // just remove it
+            } else {
+              replacement = primaryTag; // replace unknown product-like tags with primary
+            }
+            item.promptText = item.promptText.split(tag).join(replacement);
+            console.log(`[batch-plan] Removed invented tag ${tag} → "${replacement}" in "${item.title}"`);
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Image tag auto-fix: prepend primary tag if all allowed tags are missing
   if (referenceImages.length > 0) {
     const allTags = referenceImages.map((img) => img.tag);
     const primaryTag = allTags[0]!;
@@ -469,8 +522,8 @@ export async function POST(req: NextRequest) {
 
   // 4. No-text / end-card auto-fix
   for (const item of items) {
-    // 4a. Append end-card app note if instruction detected and GPT missed it
-    if (hasEndCardInstruction) {
+    // 4a. Append end-card app note if enabled and GPT missed it
+    if (effectiveEndCard) {
       const hasEndNote = item.promptText.toLowerCase().includes("end card is appended") ||
         item.promptText.toLowerCase().includes("appended automatically");
       if (!hasEndNote && item.promptText.trim().length > 0) {
@@ -503,7 +556,7 @@ export async function POST(req: NextRequest) {
     batchType,
     batchSize,
     includeVoiceover: resolvedVoiceover,
-    hasEndCardInstruction,
+    officialEndCardEnabled: effectiveEndCard,
     items,
   };
 

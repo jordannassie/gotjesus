@@ -14,6 +14,7 @@ interface BatchDraft {
   includeVoiceover?: boolean;
   batchSize?: number;
   postCaption?: string;
+  officialEndCardEnabled?: boolean;
 }
 
 // Voiceover defaults to ON only for UGC Ads (mirrors batch-plan/route.ts)
@@ -48,6 +49,7 @@ function saveDraft(workspaceKey: string, draft: BatchDraft) {
 interface ReferenceImage {
   id: string;
   tag: string;
+  info: string;
   name: string;
   url: string;
 }
@@ -73,7 +75,7 @@ interface BatchPlanResponse {
   batchType: string;
   batchSize: number;
   includeVoiceover: boolean;
-  hasEndCardInstruction: boolean;
+  officialEndCardEnabled: boolean;
   items: BatchItem[];
 }
 
@@ -128,43 +130,63 @@ function isSqlMissingError(msg: string): boolean {
 
 // ─── Image Card ───────────────────────────────────────────────────────────────
 
-function ImageCard({ image, index, allTags, onChange, onRemove }: {
+function ImageCard({ image, index, allTags, onUpdate, onRemove }: {
   image: ReferenceImage;
   index: number;
   allTags: string[];
-  onChange: (id: string, tag: string) => void;
+  onUpdate: (id: string, updates: Partial<Pick<ReferenceImage, "tag" | "info">>) => void;
   onRemove: (id: string) => void;
 }) {
   const [tagInput, setTagInput] = useState(image.tag);
   const [tagError, setTagError] = useState("");
+  const [infoInput, setInfoInput] = useState(image.info);
 
-  const commit = () => {
+  const commitTag = () => {
     const n = normalizeTag(tagInput);
     if (!n) { setTagInput(image.tag); setTagError(""); return; }
     const others = allTags.filter((_, i) => i !== index);
     if (others.includes(n)) { setTagError("Duplicate tag"); return; }
     setTagError("");
     setTagInput(n);
-    onChange(image.id, n);
+    onUpdate(image.id, { tag: n });
+  };
+
+  const commitInfo = () => {
+    onUpdate(image.id, { info: infoInput.trim() });
   };
 
   return (
     <div className="flex items-start gap-2.5 p-2.5 rounded-xl border border-neutral-800 bg-neutral-900/60">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={image.url} alt={image.name} className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-neutral-700" />
-      <div className="flex-1 min-w-0 flex flex-col gap-1">
+      <div className="flex-1 min-w-0 flex flex-col gap-1.5">
         <p className="text-[10px] font-medium text-neutral-300 truncate">{image.name}</p>
-        <div className="flex flex-col gap-0.5">
-          <input
-            type="text"
-            value={tagInput}
-            onChange={(e) => { setTagInput(e.target.value); setTagError(""); }}
-            onBlur={commit}
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            className={`w-full bg-neutral-800 border rounded-lg px-2 py-1 text-[11px] font-mono text-neutral-200 outline-none transition-colors ${tagError ? "border-red-800" : "border-neutral-700 focus:border-neutral-500"}`}
-            placeholder="@tag"
-          />
-          {tagError && <p className="text-[10px] text-red-400">{tagError}</p>}
+        <div className="grid grid-cols-2 gap-1.5">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] uppercase tracking-widest text-neutral-600">Tag</span>
+            <input
+              type="text"
+              value={tagInput}
+              onChange={(e) => { setTagInput(e.target.value); setTagError(""); }}
+              onBlur={commitTag}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              className={`w-full bg-neutral-800 border rounded-lg px-2 py-1 text-[11px] font-mono text-neutral-200 outline-none transition-colors ${tagError ? "border-red-800" : "border-neutral-700 focus:border-neutral-500"}`}
+              placeholder="@product1"
+            />
+            {tagError && <p className="text-[10px] text-red-400">{tagError}</p>}
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] uppercase tracking-widest text-neutral-600">Info</span>
+            <input
+              type="text"
+              value={infoInput}
+              onChange={(e) => setInfoInput(e.target.value)}
+              onBlur={commitInfo}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              className="w-full bg-neutral-800 border border-neutral-700 focus:border-neutral-500 rounded-lg px-2 py-1 text-[11px] text-neutral-300 outline-none transition-colors"
+              placeholder="Back of black T-shirt image"
+            />
+          </div>
         </div>
       </div>
       <button type="button" onClick={() => onRemove(image.id)} title="Remove" className="w-6 h-6 flex items-center justify-center rounded-md border border-neutral-700 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors mt-0.5">×</button>
@@ -377,6 +399,8 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
   const [batchSize, setBatchSize] = useState(4);
   const [includeVoiceover, setIncludeVoiceover] = useState(false); // loaded from draft or batchType default
   const [postCaption, setPostCaption] = useState(() => getDefaultPostCaption(workspaceKey));
+  // Official end card: ON by default (app appends the 1-sec branded end card)
+  const [officialEndCardEnabled, setOfficialEndCardEnabled] = useState(true);
 
   // Auto-update voiceover default when batch type changes (unless user already has a draft)
   const voiceoverUserOverride = useRef(false);
@@ -449,12 +473,15 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     } else {
       setPostCaption(getDefaultPostCaption(workspaceKey));
     }
+    if (typeof draft.officialEndCardEnabled === "boolean") {
+      setOfficialEndCardEnabled(draft.officialEndCardEnabled);
+    }
   }, [workspaceKey]);
 
   // ── Draft persistence: auto-save whenever relevant state changes ──────────
   useEffect(() => {
-    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize, postCaption });
-  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize, postCaption]);
+    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize, postCaption, officialEndCardEnabled });
+  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize, postCaption, officialEndCardEnabled]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -486,7 +513,9 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
         const res = await fetch("/api/campaign-batches/upload", { method: "POST", body: form });
         const data = (await res.json()) as { url?: string; name?: string; error?: string };
         if (!res.ok || !data.url) throw new Error(data.error ?? "Upload failed.");
-        newImages.push({ id: `img-${Date.now()}-${i}`, tag: defaultTagForIndex(startIndex + newImages.length), name: data.name ?? file.name, url: data.url });
+        const rawName = data.name ?? file.name ?? "";
+        const infoDefault = rawName.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim() || "Reference image";
+        newImages.push({ id: `img-${Date.now()}-${i}`, tag: defaultTagForIndex(startIndex + newImages.length), info: infoDefault, name: rawName, url: data.url });
       } catch (err) {
         setUploadError(err instanceof Error ? err.message : "Upload failed.");
       }
@@ -495,8 +524,8 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     setIsUploading(false);
   }, [workspaceKey, referenceImages.length]);
 
-  const handleTagChange = useCallback((id: string, tag: string) => {
-    setReferenceImages(prev => prev.map(img => img.id === id ? { ...img, tag } : img));
+  const handleImageUpdate = useCallback((id: string, updates: Partial<Pick<ReferenceImage, "tag" | "info">>) => {
+    setReferenceImages(prev => prev.map(img => img.id === id ? { ...img, ...updates } : img));
   }, []);
 
   const handleRemoveImage = useCallback((id: string) => {
@@ -522,10 +551,11 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
         body: JSON.stringify({
           workspaceKey, brandName,
           instruction: chatGptInstruction.trim(), batchType,
-          referenceImages: referenceImages.map(({ tag, name, url }) => ({ tag, name, url })),
+          referenceImages: referenceImages.map(({ tag, info, name, url }) => ({ tag, info: info || undefined, name, url })),
           referenceImageUrl: firstImageUrl || undefined,
           batchSize,
           includeVoiceover,
+          officialEndCardEnabled,
         }),
       });
       const data = (await res.json()) as BatchPlanResponse & { error?: string };
@@ -536,7 +566,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     } finally {
       setIsGenerating(false);
     }
-  }, [workspaceKey, brandName, chatGptInstruction, batchType, referenceImages, firstImageUrl, canCreatePrompts]);
+  }, [workspaceKey, brandName, chatGptInstruction, batchType, referenceImages, firstImageUrl, batchSize, includeVoiceover, officialEndCardEnabled, canCreatePrompts]);
 
   // ── Save batch ────────────────────────────────────────────────────────────────
 
@@ -553,6 +583,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
           batchTitle: batchPlan.batchTitle, batchType: batchPlan.batchType,
           instruction: chatGptInstruction.trim(), referenceImageUrl: firstImageUrl || undefined,
           postCaption: postCaption.trim() || undefined,
+          referenceImages: referenceImages.map(({ tag, info, name, url }) => ({ tag, info: info || undefined, name, url })),
           items: batchPlan.items.map(item => ({
             title: item.title, adType: item.adType, hook: item.hook, promptText: item.promptText,
             caption: item.caption, reason: item.reason, platform: item.platform,
@@ -573,7 +604,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     } finally {
       setIsSaving(false);
     }
-  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, chatGptInstruction, firstImageUrl]);
+  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, chatGptInstruction, firstImageUrl, postCaption, referenceImages]);
 
   // ── Per-item generation ───────────────────────────────────────────────────────
 
@@ -832,7 +863,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
             {referenceImages.length > 0 && (
               <div className="flex flex-col gap-2">
                 {referenceImages.map((img, i) => (
-                  <ImageCard key={img.id} image={img} index={i} allTags={allTags} onChange={handleTagChange} onRemove={handleRemoveImage} />
+                  <ImageCard key={img.id} image={img} index={i} allTags={allTags} onUpdate={handleImageUpdate} onRemove={handleRemoveImage} />
                 ))}
               </div>
             )}
@@ -854,6 +885,9 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
               )}
             </div>
             {uploadError && <p className="text-[11px] text-red-400">{uploadError}</p>}
+            <p className="text-[10px] text-neutral-700 leading-relaxed">
+              Use <span className="text-neutral-500">Tag</span> for prompt references and <span className="text-neutral-500">Info</span> to tell GPT what the image is. Example: Tag <span className="font-mono text-neutral-500">@product1</span> / Info <span className="text-neutral-500">Back of black T-shirt image</span>. GPT will only use the image tags you upload here — add a model image if you want prompts to reference <span className="font-mono text-neutral-500">@model1</span>.
+            </p>
             <div className="flex flex-col gap-1.5">
               <button type="button" onClick={() => setShowUrlFallback(v => !v)} className="flex items-center gap-1 text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors w-fit">
                 {showUrlFallback ? "▲" : "▼"} Or paste image URL
@@ -936,15 +970,35 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                     <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${includeVoiceover ? "translate-x-4" : "translate-x-1"}`} />
                   </button>
                 </div>
+
+                {/* Official End Card toggle */}
+                <div className="flex items-center justify-between gap-3 py-3 border-t border-neutral-800/60">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Official End Card</span>
+                    <p className="text-[10px] text-neutral-700 max-w-xs">
+                      {officialEndCardEnabled
+                        ? "Seedance creates the main reel (7 sec). App appends the official 1-second end card automatically."
+                        : "No end card appended. Seedance generates the full 8-second reel."}
+                    </p>
+                    {officialEndCardEnabled && (
+                      <p className="text-[10px] text-amber-700 mt-0.5">Do not upload the end card as a reference image unless you only want it used as a visual style reference.</p>
+                    )}
+                  </div>
+                  <button type="button" role="switch" aria-checked={officialEndCardEnabled}
+                    onClick={() => setOfficialEndCardEnabled(v => !v)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer ml-2 ${officialEndCardEnabled ? "bg-emerald-500" : "bg-neutral-700"}`}>
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-200 ${officialEndCardEnabled ? "translate-x-4" : "translate-x-1"}`} />
+                  </button>
+                </div>
                 <div className="flex flex-col gap-1.5">
                   <div className="flex flex-col gap-0.5">
                     <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Campaign Brief</label>
                     <p className="text-[10px] text-neutral-700">Tell ChatGPT what kind of prompts to create. Use tags like <span className="font-mono text-neutral-500">@product1</span> and <span className="font-mono text-neutral-500">@logo</span>.</p>
                     {referenceImages.length > 0 && (
                       <p className="text-[10px] text-emerald-700 mt-0.5">
-                        GPT will use your image tags&nbsp;
+                        GPT will only use uploaded tags:&nbsp;
                         <span className="font-mono">{referenceImages.map(i => i.tag).join(", ")}</span>
-                        &nbsp;inside every Seedance prompt.
+                        . Invented tags are removed automatically.
                       </p>
                     )}
                   </div>
@@ -1032,8 +1086,8 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                   Brief: {chatGptInstruction.trim().slice(0, 140)}{chatGptInstruction.trim().length > 140 ? "…" : ""}
                 </span>
               )}
-              {batchPlan.hasEndCardInstruction && (
-                <span className="text-[10px] text-sky-700">End card appended by app · main reel only</span>
+              {batchPlan.officialEndCardEnabled && (
+                <span className="text-[10px] text-sky-700">Official end card appended by app · main reel 7 sec</span>
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
