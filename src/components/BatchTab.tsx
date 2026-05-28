@@ -406,8 +406,14 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
         batch?: { id: string };
         items?: { id: string }[];
         error?: string;
+        detail?: string;
       };
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (!res.ok) {
+        const msg = data.detail
+          ? `${data.error ?? "Save failed"}: ${data.detail}`
+          : (data.error ?? `HTTP ${res.status}`);
+        throw new Error(msg);
+      }
       if (!data.batch?.id) throw new Error("Save succeeded but batch ID was missing.");
       setSavedBatchData({
         batchId: data.batch.id,

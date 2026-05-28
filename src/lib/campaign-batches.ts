@@ -26,6 +26,35 @@ function getClient() {
   return createClient(url, key);
 }
 
+/**
+ * Turns a Supabase PostgrestError (or any unknown error value) into a
+ * human-readable string that is never "undefined".
+ *
+ * Supabase errors are plain objects — NOT Error instances — so
+ * `error instanceof Error` is false and `error.message` can be undefined
+ * depending on the client version and error source.
+ */
+function serializeError(error: unknown): string {
+  if (!error) return "unknown error (null/undefined)";
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+
+  // Supabase PostgrestError: { message?, code?, details?, hint? }
+  const e = error as Record<string, unknown>;
+  const parts: string[] = [];
+  if (e["message"]) parts.push(String(e["message"]));
+  if (e["code"])    parts.push(`code=${String(e["code"])}`);
+  if (e["details"]) parts.push(`details=${String(e["details"])}`);
+  if (e["hint"])    parts.push(`hint=${String(e["hint"])}`);
+  if (parts.length > 0) return parts.join(" | ");
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CampaignBatch {
@@ -131,7 +160,8 @@ export async function createCampaignBatchWithItems(
     .insert(batchRow);
 
   if (batchError) {
-    throw new Error(`createCampaignBatch failed: ${batchError.message}`);
+    console.error("[campaign-batches] campaign_batches insert error:", batchError);
+    throw new Error(`createCampaignBatch failed: ${serializeError(batchError)}`);
   }
 
   console.log(`[campaign-batches] Inserted batch ${batchId}`);
@@ -170,9 +200,9 @@ export async function createCampaignBatchWithItems(
     .insert(itemRows);
 
   if (itemsError) {
-    // Batch was already inserted — surface the error clearly
+    console.error("[campaign-batches] campaign_items insert error:", itemsError);
     throw new Error(
-      `campaign_items insert failed (batch ${batchId} was saved): ${itemsError.message}`
+      `campaign_items insert failed (batch ${batchId} was saved): ${serializeError(itemsError)}`
     );
   }
 
