@@ -249,13 +249,52 @@ interface ContentSlotRow {
   slot_name: string;
   prompt_text: string;
   post_caption: string;
-  reference_images: Array<{ url: string; path: string; name: string }>;
+  reference_images: Array<{
+    url: string;
+    path: string;
+    name: string;
+    tag?: string;   // e.g. "@product1" — used in prompt reference guide
+    info?: string;  // human description, e.g. "Back of black T-shirt image"
+  }>;
   enabled: boolean;
   scheduled_post_time: string;
   resolution: string;
   duration_seconds: number;
   aspect_ratio: string;
   sort_order: number;
+}
+
+/**
+ * Builds the same enhanced Seedance prompt as ContentSlotCard.buildEnhancedPrompt.
+ * Inlined here because Netlify background functions cannot import @/ path aliases.
+ * MUST stay in sync with src/components/ContentSlotCard.tsx:buildEnhancedPrompt.
+ */
+function buildEnhancedPrompt(
+  promptText: string,
+  referenceImages: ContentSlotRow["reference_images"]
+): string {
+  const tagged = referenceImages.filter(
+    (img) => img.tag?.startsWith("@") && (img.info?.trim() || img.name)
+  );
+  if (tagged.length === 0) return promptText;
+
+  const guide = tagged
+    .map((img) => `${img.tag} = ${img.info?.trim() || img.name}`)
+    .join("\n");
+
+  return [
+    "Reference images:",
+    guide,
+    "",
+    "User prompt:",
+    promptText,
+    "",
+    "Rules:",
+    "- Preserve product/reference images exactly.",
+    "- Do not invent logos, text, captions, or extra graphics.",
+    "- No captions, no subtitles, no text overlays, no extra words on screen.",
+    "- Do not alter product design.",
+  ].join("\n");
 }
 
 async function getEnabledContentSlots(supabase: SupabaseClient): Promise<ContentSlotRow[]> {
@@ -575,8 +614,9 @@ const handler: Handler = async () => {
     .map((s) => ({
       timeHHMM: s.scheduled_post_time,
       promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
+      referenceImages: s.reference_images ?? [],      // full objects with tag/info
+      imageUrls: (s.reference_images ?? []).map((img) => img.url), // for Kie reference_image_urls
       caption: s.post_caption || GOT_JESUS_CAPTION,
-      imageUrls: (s.reference_images ?? []).map((img) => img.url),
       resolution: s.resolution || "480p",
       durationSeconds: s.duration_seconds || 8,
       slotKey: s.slot_key,
@@ -598,7 +638,7 @@ const handler: Handler = async () => {
   // Sequential processing would risk hitting Netlify's 15-min background function
   // timeout when 3+ slots each take 5-10 min to generate, download, and upload.
   const processSlot = async (slotInfo: typeof slotsToProcess[number]) => {
-    const { timeHHMM, promptText, caption, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
+    const { timeHHMM, promptText, referenceImages, caption, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
     const scheduledForISO = pacificTimeToUTCISO(timeHHMM);
     console.log(`[scheduler] Slot ${slotKey} ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
 
@@ -618,7 +658,12 @@ const handler: Handler = async () => {
       // Generate Kie reel using slot's prompt + images
       console.log(`[prompt] version=${PROMPT_VERSION} source=scheduled slot=${slotKey}`);
       console.log(`[scheduler] Submitting Kie job for reel ${reelId}`);
-      const fullPrompt = promptText + NATIVE_ENDING_SUFFIX;
+
+      // Build the same enhanced prompt as manual Generate Test:
+      //   "Reference images:\n@product1 = ...\n\nUser prompt:\n...\nRules: no text overlays…"
+      // Falls back to raw promptText when no tagged images are present.
+      const enhancedPrompt = buildEnhancedPrompt(promptText, referenceImages);
+      const fullPrompt = enhancedPrompt + NATIVE_ENDING_SUFFIX;
       const taskId = await submitKieJob(supabase, fullPrompt, imageUrls, resolution, durationSeconds);
       await updateReelRow(supabase, reelId, {
         kie_task_id: taskId,
