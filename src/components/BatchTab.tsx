@@ -73,7 +73,18 @@ interface BatchPlanResponse {
   batchType: string;
   batchSize: number;
   includeVoiceover: boolean;
+  hasEndCardInstruction: boolean;
   items: BatchItem[];
+}
+
+const END_CARD_KEYWORDS_CLIENT = [
+  "end card", "endcard", "end-card", "official end card", "logo card",
+  "final card", "1 second end card", "end screen", "outro card", "outro",
+];
+
+function detectEndCard(text: string): boolean {
+  const lower = text.toLowerCase();
+  return END_CARD_KEYWORDS_CLIENT.some((kw) => lower.includes(kw));
 }
 
 type ItemGenStatus = "idle" | "submitting" | "generating" | "saving" | "done" | "failed";
@@ -940,6 +951,16 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                   <textarea value={chatGptInstruction} onChange={e => setChatGptInstruction(e.target.value)} disabled={isGenerating} rows={3}
                     placeholder="Describe the campaign goal, tone, audience, and key message."
                     className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 transition-colors disabled:opacity-50 leading-relaxed" />
+                  {detectEndCard(chatGptInstruction) && (
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-sky-900 bg-sky-950/30">
+                      <svg className="w-3.5 h-3.5 text-sky-500 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      </svg>
+                      <p className="text-[10px] text-sky-400 leading-relaxed">
+                        <strong>End card detected:</strong> Seedance will generate the main reel only. The app appends the official end card automatically after generation.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1006,6 +1027,14 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
               </span>
               <h3 className="text-sm font-bold text-white">{batchPlan.batchTitle}</h3>
               <span className="text-[10px] text-neutral-600">{batchPlan.batchType} · {brandName}</span>
+              {chatGptInstruction.trim() && (
+                <span className="text-[10px] text-neutral-700 leading-relaxed">
+                  Brief: {chatGptInstruction.trim().slice(0, 140)}{chatGptInstruction.trim().length > 140 ? "…" : ""}
+                </span>
+              )}
+              {batchPlan.hasEndCardInstruction && (
+                <span className="text-[10px] text-sky-700">End card appended by app · main reel only</span>
+              )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {!savedBatchData && (

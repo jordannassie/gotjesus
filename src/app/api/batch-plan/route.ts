@@ -52,6 +52,7 @@ export interface BatchPlanResponse {
   batchType: string;
   batchSize: number;
   includeVoiceover: boolean;
+  hasEndCardInstruction: boolean;
   items: BatchItem[];
 }
 
@@ -100,12 +101,27 @@ function selectRandomPlays(library: string[], count: number): string[] {
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
-// ─── No-text-overlay suffix ───────────────────────────────────────────────────
+// ─── No-text / end-card suffixes ─────────────────────────────────────────────
 // Always appended server-side if missing. Prevents Seedance from adding
-// misspelled or unwanted captions/subtitles to generated video frames.
+// misspelled captions, fake end cards, or unwanted text in video frames.
 
 const NO_TEXT_SUFFIX =
-  "No captions, no subtitles, no text overlays, no extra words on screen, no fake logos, do not alter product design.";
+  "No captions, no subtitles, no text overlays, no extra words on screen, no fake logos, no fake end cards, do not alter product design.";
+
+const END_CARD_APP_NOTE =
+  "The official end card is appended automatically by the app after this video; do not generate an end card inside Seedance.";
+
+// ─── End-card instruction detection ──────────────────────────────────────────
+
+const END_CARD_KEYWORDS = [
+  "end card", "endcard", "end-card", "official end card", "logo card",
+  "final card", "1 second end card", "end screen", "outro card", "outro",
+];
+
+function detectEndCardInstruction(instruction: string): boolean {
+  const lower = instruction.toLowerCase();
+  return END_CARD_KEYWORDS.some((kw) => lower.includes(kw));
+}
 
 // ─── Per-brand style guidance ─────────────────────────────────────────────────
 
@@ -134,6 +150,7 @@ function buildSystemPrompt(
   batchSize: number,
   selectedPlays: string[],
   includeVoiceover: boolean,
+  hasEndCardInstruction: boolean,
 ): string {
   const guidance = BRAND_GUIDANCE[workspaceKey] ?? NEUTRAL_BRAND_GUIDANCE;
   const isUgc = batchType === "UGC Ads";
@@ -176,7 +193,7 @@ STRICT RULES — follow every single one:
 4. Do NOT invent logos, slogans, shirt text, product claims, pricing, or brand promises not present in the brief or reference images.
 5. Do NOT add religious, faith, or spiritual language unless the brand context or instruction specifically calls for it.
 6. Do NOT mention AI in any video concept.
-7. Do NOT include end-card or outro instructions in promptText.
+7. Do NOT include end-card, logo-card, outro, or text-card instructions in promptText. ${hasEndCardInstruction ? "The user has requested an official end card. Do NOT generate or describe the end card inside Seedance. The application appends the official 1-second end card automatically after the generated video. Write promptText only for the main reel content before the end card." : ""}
 8. Do NOT use placeholder words like "[product]" or "[your brand]".
 9. promptText must be Seedance-ready. ${includeVoiceover ? "Include spoken lines as described in rule 13. Under 500 characters." : "Subject, action, setting, camera movement, lighting. Under 400 characters."}
 10. Caption is for social posting only — do NOT put captions, hashtags, or post text in promptText.
@@ -187,14 +204,26 @@ STRICT RULES — follow every single one:
     - GOOD: "@model1 holds @product1 against golden hour backdrop, slow pull-back, shallow depth of field."
     Every promptText must contain at least one of the provided image tags.
 ${voiceoverRule}
-14. NO TEXT OVERLAY RULE — MANDATORY: Never ask Seedance to show captions, subtitles, text overlays, hook text on screen, CTA text on screen, or any extra words on screen. Do NOT include instructions like "text on screen says", "caption reads", "overlay text", "show the word", or similar. Video must be clean with no on-screen text. End every promptText with: "No captions, no subtitles, no text overlays, no extra words on screen, no fake logos, do not alter product design."
+14. NO TEXT OVERLAY RULE — MANDATORY: Never ask Seedance to show captions, subtitles, text overlays, hook text on screen, CTA text on screen, logo cards, fake end cards, or any extra words on screen. Do NOT include instructions like "text on screen says", "caption reads", "overlay text", "show the word", "logo appears", or similar. Video must be clean — no on-screen text whatsoever.
 15. CREATIVE MODE: ${creativeModeFocus}
 16. AD PLAY STRATEGY — MANDATORY: Use exactly the following ${batchSize} ad plays, in this exact order:
 ${playsListText}
     - item[i].adType MUST exactly match play[i] from the list above.
     - Do NOT substitute, skip, or reorder these ad plays.
     - Do NOT create more or fewer than ${batchSize} items.
-17. TIMING STRUCTURE: Each promptText should briefly describe what happens at three phases — opening (0–2 sec), middle (2–5 sec), closing (5–8 sec). Keep it concise.
+17. TIMING STRUCTURE: Each promptText should briefly describe what happens at three phases:
+    ${hasEndCardInstruction
+      ? "Opening (0–2 sec), Middle (2–5 sec), Closing (5–7 sec). IMPORTANT: Write only for the main 7 seconds. The official 1-second end card is appended automatically by the app — do not describe or generate it inside this prompt."
+      : "Opening (0–2 sec), Middle (2–5 sec), Closing (5–8 sec). Keep it concise."}
+18. CAMPAIGN BRIEF RULE — MANDATORY: The Campaign Brief is the user's primary creative instruction. You MUST extract concrete requirements from it and apply them to every promptText where relevant.
+    Examples:
+    - Brief says "energetic" → every prompt should be fast-paced and high-energy
+    - Brief says "show unboxing" → include unboxing concepts where the ad play allows
+    - Brief says "no talking" → override voiceover rule, make all prompts visual-only
+    - Brief says "UGC style" → make all prompts feel handheld, phone-shot, creator-style
+    - Brief says "official end card" → write main reel content only; app appends the end card
+    Do not ignore the brief. Do not output generic prompts that ignore the brief's intent.${hasEndCardInstruction ? `
+19. END CARD RULE — MANDATORY (detected in campaign brief): Do NOT generate, describe, or reference any end card, logo card, text card, or branded outro inside any promptText. The application automatically appends the official 1-second branded end card after the generated video. Your job is to write the Seedance prompt for the main reel content only. Every promptText must include this exact sentence at the end: "The official end card is appended automatically by the app; do not generate an end card inside Seedance."` : ""}
 
 JSON schema to return:
 {
@@ -204,8 +233,8 @@ JSON schema to return:
       "title": "short concept title",
       "adType": "must exactly match the ad play for this position",
       "hook": "the first 2 seconds — what grabs attention",
-      "promptText": "Full Seedance-ready prompt. ${includeVoiceover ? "Include spoken lines in double quotes." : "Visual description only."} Must end with: No captions, no subtitles, no text overlays, no extra words on screen, no fake logos, do not alter product design.",
-      "caption": "social post caption with hashtags — this is for posting only, NOT for the video",
+      "promptText": "Full Seedance-ready prompt${hasEndCardInstruction ? " for main 7-second reel only (app appends end card)" : ""}. ${includeVoiceover ? "Include spoken lines in double quotes." : "Visual description only."} Must end with: ${hasEndCardInstruction ? "The official end card is appended automatically by the app; do not generate an end card inside Seedance. " : ""}No captions, no subtitles, no text overlays, no extra words on screen, no fake logos, no fake end cards, do not alter product design.",
+      "caption": "social post caption with hashtags — for posting only, NOT for the video",
       "reason": "1 sentence on why this ad play works for this brand"
     }
   ]
@@ -346,8 +375,13 @@ export async function POST(req: NextRequest) {
 
   const openai = new OpenAI({ apiKey });
 
+  const hasEndCardInstruction = detectEndCardInstruction(instruction.trim());
+  if (hasEndCardInstruction) {
+    console.log("[batch-plan] End card instruction detected — prompts will cover main content only");
+  }
+
   const systemPrompt = buildSystemPrompt(
-    brandName, workspaceKey, batchType, batchSize, selectedPlays, resolvedVoiceover
+    brandName, workspaceKey, batchType, batchSize, selectedPlays, resolvedVoiceover, hasEndCardInstruction
   );
   const userPrompt = buildUserPrompt(instruction, batchSize, referenceImages, referenceImageUrl);
 
@@ -433,9 +467,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 4. No-text-overlay auto-fix: append if not already present
-  const noTextLower = NO_TEXT_SUFFIX.toLowerCase();
+  // 4. No-text / end-card auto-fix
   for (const item of items) {
+    // 4a. Append end-card app note if instruction detected and GPT missed it
+    if (hasEndCardInstruction) {
+      const hasEndNote = item.promptText.toLowerCase().includes("end card is appended") ||
+        item.promptText.toLowerCase().includes("appended automatically");
+      if (!hasEndNote && item.promptText.trim().length > 0) {
+        item.promptText = item.promptText.trimEnd() + " " + END_CARD_APP_NOTE;
+      }
+    }
+
+    // 4b. Append no-text-overlay suffix if not already present
     const hasNoText =
       item.promptText.toLowerCase().includes("no captions") ||
       item.promptText.toLowerCase().includes("no text overlay") ||
@@ -443,16 +486,15 @@ export async function POST(req: NextRequest) {
     if (!hasNoText && item.promptText.trim().length > 0) {
       item.promptText = item.promptText.trimEnd() + " " + NO_TEXT_SUFFIX;
     }
-    // Ensure caption does NOT bleed into promptText
+
+    // 4c. Ensure social caption did NOT bleed into promptText
     if (item.promptText.includes("#") && item.caption && item.promptText.includes(item.caption.slice(0, 20))) {
-      // GPT accidentally put the social caption inside promptText — remove it
       item.promptText = item.promptText.replace(item.caption, "").trim();
       if (!item.promptText.toLowerCase().includes("no captions")) {
         item.promptText = item.promptText + " " + NO_TEXT_SUFFIX;
       }
     }
   }
-  void noTextLower; // suppress unused variable warning
 
   const response: BatchPlanResponse = {
     batchTitle: parsed.batchTitle ?? `${brandName} Batch`,
@@ -461,6 +503,7 @@ export async function POST(req: NextRequest) {
     batchType,
     batchSize,
     includeVoiceover: resolvedVoiceover,
+    hasEndCardInstruction,
     items,
   };
 
