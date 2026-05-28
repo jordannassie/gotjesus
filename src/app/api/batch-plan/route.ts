@@ -47,31 +47,34 @@ export interface BatchPlanResponse {
 
 // ─── Per-brand style guidance ─────────────────────────────────────────────────
 
+// Fallback is used for any workspace not listed here — keeps output neutral.
+const NEUTRAL_BRAND_GUIDANCE =
+  "Match the tone, style, and content to the brand name, batch type, and campaign brief provided. Do not invent product claims, slogans, or brand promises not found in the brief or reference image.";
+
 const BRAND_GUIDANCE: Record<string, string> = {
   gotjesus:
-    "This is a faith-based brand. Keep content positive, inviting, and sincere. Avoid clichés or cheesy church tropes. The visual style should feel modern, warm, and aspirational.",
+    "Faith-based apparel and lifestyle brand. Keep content warm, modern, and visually compelling. Do not force religious themes unless the instruction asks for them. Avoid clichés.",
   ugcfire:
-    "This is a UGC ad and creator campaign brand. Use authentic creator-style content, direct-to-camera hooks, product-forward visuals, and social proof moments.",
+    "UGC ad and creator campaign brand. Use authentic creator-style content, direct-to-camera hooks, product-forward visuals, and social proof moments.",
   sellbop:
-    "This is a digital product and business launch brand. Use creator/entrepreneur energy, transformation hooks, income or growth visuals, and launch urgency.",
+    "Digital product and business launch brand. Use creator/entrepreneur energy, transformation hooks, growth visuals, and launch urgency.",
   godvo:
-    "This is a serious AI governance and authority-layer brand. Use clean, architectural, futuristic visuals. No hype. Convey weight, precision, and legitimacy.",
+    "AI governance and authority-layer brand. Use clean, architectural, futuristic visuals. No hype. Convey weight, precision, and legitimacy.",
   "1billion":
-    "This is a Gospel, discipleship, and ministry brand. Content should feel global, diverse, spiritually serious but accessible. Focus on movement, mission, and transformation.",
+    "Gospel, discipleship, and ministry brand. Content should feel global, diverse, and spiritually accessible. Focus on movement, mission, and transformation.",
 };
 
 // ─── Build the OpenAI prompt ──────────────────────────────────────────────────
 
 function buildSystemPrompt(brandName: string, workspaceKey: string, batchType: string): string {
-  const guidance = BRAND_GUIDANCE[workspaceKey] ?? BRAND_GUIDANCE["gotjesus"];
+  const guidance = BRAND_GUIDANCE[workspaceKey] ?? NEUTRAL_BRAND_GUIDANCE;
 
-  return `You are an expert short-form video concept writer specialising in social media ads and organic content.
+  return `You are an expert short-form video concept writer specialising in social media ads and organic content for any type of brand, product, or service.
 
 Brand context:
 - Brand name: ${brandName}
-- Brand workspace: ${workspaceKey}
 - Batch type: ${batchType}
-- ${guidance}
+- Brand style guidance: ${guidance}
 
 Your job is to generate exactly 8 video concepts for Seedance 2.0 AI video generation.
 
@@ -79,14 +82,17 @@ STRICT RULES — follow these exactly:
 1. Output ONLY valid JSON. No markdown, no explanation, no code fences.
 2. Generate exactly 8 items in the "items" array.
 3. Each video concept is 8 seconds long, 9:16 vertical format.
-4. Do NOT invent new logos, slogans, shirt text, product claims, graphics, or promises.
-5. Do NOT mention AI in any video concept.
-6. Do NOT include end-card or outro instructions in promptText.
-7. Do NOT use placeholder words like "[product]" or "[your brand]".
-8. Each concept must be visually and thematically distinct from the others.
-9. promptText must be Seedance-ready: include subject, action, setting, camera movement, lighting.
-10. Caption must be social-ready (include relevant hashtags and a call to action).
-11. Keep promptText under 300 characters.
+4. Do NOT invent logos, slogans, shirt text, product claims, pricing, or brand promises not present in the brief or reference image.
+5. Do NOT add religious, faith, or spiritual language unless the brand context or instruction specifically calls for it.
+6. Do NOT mention AI in any video concept.
+7. Do NOT include end-card or outro instructions in promptText.
+8. Do NOT use placeholder words like "[product]" or "[your brand]".
+9. Each concept must be visually and thematically distinct from the others — vary format, tone, and angle.
+10. promptText must be Seedance-ready: describe subject, action, setting, camera movement, and lighting concisely.
+11. Caption must be social-ready with relevant hashtags and a call to action.
+12. Keep promptText under 300 characters.
+13. For a General Brand Campaign batch type, create a diverse mix:
+    UGC-style ad, product demo, lifestyle scene, testimonial-style, problem-solution, cinematic brand shot, hook-based social clip, wildcard viral concept.
 
 JSON schema to return:
 {
@@ -166,7 +172,7 @@ export async function POST(req: NextRequest) {
     workspaceKey = "gotjesus",
     brandName = "Got Jesus?",
     instruction,
-    batchType = "Faith / Ministry Reels",
+    batchType = "General Brand Campaign",
     referenceImageUrl,
     batchSize: rawBatchSize,
   } = body;
