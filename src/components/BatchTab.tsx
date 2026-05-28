@@ -3,6 +3,40 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { getWorkspaceName } from "@/lib/workspaces";
 
+// ─── LocalStorage draft persistence ──────────────────────────────────────────
+
+interface BatchDraft {
+  referenceImages?: ReferenceImage[];
+  seedancePrompt?: string;
+  chatGptInstruction?: string;
+  batchType?: string;
+  useChatGPT?: boolean;
+}
+
+function draftKey(workspaceKey: string) {
+  return `reel_batch_draft:${workspaceKey}`;
+}
+
+function loadDraft(workspaceKey: string): BatchDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(draftKey(workspaceKey));
+    if (!raw) return null;
+    return JSON.parse(raw) as BatchDraft;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(workspaceKey: string, draft: BatchDraft) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(draftKey(workspaceKey), JSON.stringify(draft));
+  } catch {
+    // Storage full or unavailable — silently ignore
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ReferenceImage {
@@ -339,6 +373,35 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
   const [runAllProgress, setRunAllProgress] = useState<{ done: number; total: number } | null>(null);
   const runAllCancelRef = useRef(false);
 
+  // ── Draft persistence: load from localStorage on mount / workspace switch ────
+  const draftLoadedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (draftLoadedRef.current === workspaceKey) return; // already loaded for this workspace
+    draftLoadedRef.current = workspaceKey;
+    const draft = loadDraft(workspaceKey);
+    if (!draft) return;
+    if (Array.isArray(draft.referenceImages) && draft.referenceImages.length > 0) {
+      setReferenceImages(draft.referenceImages);
+    }
+    if (typeof draft.seedancePrompt === "string" && draft.seedancePrompt) {
+      setSeedancePrompt(draft.seedancePrompt);
+    }
+    if (typeof draft.chatGptInstruction === "string" && draft.chatGptInstruction) {
+      setChatGptInstruction(draft.chatGptInstruction);
+    }
+    if (typeof draft.batchType === "string" && draft.batchType) {
+      setBatchType(draft.batchType);
+    }
+    if (typeof draft.useChatGPT === "boolean") {
+      setUseChatGPT(draft.useChatGPT);
+    }
+  }, [workspaceKey]);
+
+  // ── Draft persistence: auto-save whenever relevant state changes ──────────
+  useEffect(() => {
+    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT });
+  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT]);
+
   // Cleanup on unmount
   useEffect(() => {
     const timers = itemTimers.current;
@@ -658,7 +721,15 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     setDeleteBatchError("");
     setIsRunningAll(false); setRunAllProgress(null);
     runAllCancelRef.current = true;
+    // Reference images are intentionally kept — user may want a new prompt on same product
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Clear Images ──────────────────────────────────────────────────────────────
+
+  const handleClearImages = useCallback(() => {
+    if (!confirm("Remove all uploaded images from this workspace draft?")) return;
+    setReferenceImages([]);
   }, []);
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -709,14 +780,22 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
               </div>
             )}
             <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" onChange={handleImageUpload} />
-            <button type="button" onClick={() => imageInputRef.current?.click()} disabled={isUploading}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-neutral-700 text-xs text-neutral-500 hover:text-neutral-300 hover:border-neutral-500 transition-colors disabled:opacity-50 w-fit">
-              {isUploading
-                ? <><span className="w-3 h-3 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />Uploading…</>
-                : <><svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
-                  {referenceImages.length > 0 ? "+ Add Another Image" : "+ Upload Image"}</>
-              }
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button type="button" onClick={() => imageInputRef.current?.click()} disabled={isUploading}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-neutral-700 text-xs text-neutral-500 hover:text-neutral-300 hover:border-neutral-500 transition-colors disabled:opacity-50">
+                {isUploading
+                  ? <><span className="w-3 h-3 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />Uploading…</>
+                  : <><svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
+                    {referenceImages.length > 0 ? "+ Add Another Image" : "+ Upload Image"}</>
+                }
+              </button>
+              {referenceImages.length > 0 && (
+                <button type="button" onClick={handleClearImages}
+                  className="text-[11px] text-neutral-700 hover:text-red-400 transition-colors border border-neutral-800 rounded-lg px-2.5 py-1.5">
+                  Clear Images
+                </button>
+              )}
+            </div>
             {uploadError && <p className="text-[11px] text-red-400">{uploadError}</p>}
             <div className="flex flex-col gap-1.5">
               <button type="button" onClick={() => setShowUrlFallback(v => !v)} className="flex items-center gap-1 text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors w-fit">
@@ -770,6 +849,13 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                   <div className="flex flex-col gap-0.5">
                     <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Campaign Brief</label>
                     <p className="text-[10px] text-neutral-700">Tell ChatGPT what kind of prompts to create. Use tags like <span className="font-mono text-neutral-500">@product1</span> and <span className="font-mono text-neutral-500">@logo</span>.</p>
+                    {referenceImages.length > 0 && (
+                      <p className="text-[10px] text-emerald-700 mt-0.5">
+                        GPT will use your image tags&nbsp;
+                        <span className="font-mono">{referenceImages.map(i => i.tag).join(", ")}</span>
+                        &nbsp;inside every Seedance prompt.
+                      </p>
+                    )}
                   </div>
                   <textarea value={chatGptInstruction} onChange={e => setChatGptInstruction(e.target.value)} disabled={isGenerating} rows={3}
                     placeholder="Describe the campaign goal, tone, audience, and key message."
