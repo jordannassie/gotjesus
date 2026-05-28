@@ -96,6 +96,7 @@ interface ItemGenState {
   videoUrl?: string;
   reelId?: string;
   error?: string;
+  libraryError?: string; // set when video generated but Library save had issues
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -355,11 +356,24 @@ function ConceptCard({ item, index, itemId, genState, includeVoiceover, onGenera
             {gsStatus === "failed" && gs.error && (
               <p className="text-[11px] text-red-400 leading-relaxed">{gs.error}</p>
             )}
-            {gsStatus === "done" && gs.videoUrl && (
-              <a href={gs.videoUrl} target="_blank" rel="noopener noreferrer"
-                className="text-[11px] text-emerald-400 hover:text-emerald-300 underline underline-offset-2">
-                View raw video ↗
-              </a>
+            {gsStatus === "done" && (
+              <div className="flex flex-col gap-1">
+                {gs.reelId ? (
+                  <p className="text-[11px] text-emerald-500 leading-relaxed">
+                    ✓ Saved to Library — open the Library tab to review and post.
+                  </p>
+                ) : gs.libraryError ? (
+                  <p className="text-[11px] text-amber-500 leading-relaxed">
+                    ⚠ {gs.libraryError}
+                  </p>
+                ) : null}
+                {gs.videoUrl && (
+                  <a href={gs.videoUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-[11px] text-neutral-500 hover:text-neutral-300 underline underline-offset-2 w-fit">
+                    Download video ↗
+                  </a>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -624,11 +638,31 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kieVideoUrl, kieTaskId }),
       });
-      const data = (await res.json()) as { reelId?: string; error?: string };
-      setItemGenStates(prev => ({ ...prev, [itemId]: { status: "done", kieTaskId, videoUrl: kieVideoUrl, reelId: data.reelId } }));
-    } catch {
-      // Still mark done — video exists
-      setItemGenStates(prev => ({ ...prev, [itemId]: { status: "done", kieTaskId, videoUrl: kieVideoUrl } }));
+      const data = (await res.json()) as { reelId?: string; error?: string; warning?: string };
+      if (!res.ok) {
+        // Library save failed — video generated but not in Library
+        const errMsg = data.error ?? `HTTP ${res.status}`;
+        console.error(`[BatchTab] save-to-library failed for ${itemId}:`, errMsg);
+        setItemGenStates(prev => ({
+          ...prev,
+          [itemId]: { status: "done", kieTaskId, videoUrl: kieVideoUrl, libraryError: `Not in Library: ${errMsg}` },
+        }));
+        return;
+      }
+      // Success — include any SQL migration warning
+      setItemGenStates(prev => ({
+        ...prev,
+        [itemId]: {
+          status: "done", kieTaskId, videoUrl: kieVideoUrl, reelId: data.reelId,
+          libraryError: data.warning,
+        },
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error";
+      setItemGenStates(prev => ({
+        ...prev,
+        [itemId]: { status: "done", kieTaskId, videoUrl: kieVideoUrl, libraryError: `Not in Library: ${msg}` },
+      }));
     }
   }, []);
 
@@ -906,6 +940,14 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
             <p className="text-[10px] text-neutral-700 leading-relaxed">
               Use <span className="text-neutral-500">Tag</span> for prompt references and <span className="text-neutral-500">Info</span> to tell GPT what the image is. Example: Tag <span className="font-mono text-neutral-500">@product1</span> / Info <span className="text-neutral-500">Back of black T-shirt image</span>. GPT will only use the image tags you upload here — add a model image if you want prompts to reference <span className="font-mono text-neutral-500">@model1</span>.
             </p>
+            <p className="text-[10px] text-sky-900 leading-relaxed">
+              <span className="text-sky-700 font-semibold">Model variety tip:</span>{" "}
+              Upload model reference images and tag them{" "}
+              <span className="font-mono text-sky-800">@model1</span>,{" "}
+              <span className="font-mono text-sky-800">@model2</span>,{" "}
+              <span className="font-mono text-sky-800">@model3</span> — GPT will rotate them across prompts.
+              If no model images are uploaded, GPT will describe different generic creator types automatically (no invented tags).
+            </p>
             <div className="flex flex-col gap-1.5">
               <button type="button" onClick={() => setShowUrlFallback(v => !v)} className="flex items-center gap-1 text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors w-fit">
                 {showUrlFallback ? "▲" : "▼"} Or paste image URL
@@ -1168,14 +1210,6 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
                 )}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Go to Library */}
-                {anyDone && onSwitchToLibrary && (
-                  <button type="button" onClick={onSwitchToLibrary}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-emerald-900 text-xs font-semibold text-emerald-400 hover:text-emerald-300 hover:border-emerald-700 transition-colors">
-                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" /></svg>
-                    Go to Library
-                  </button>
-                )}
                 {/* Delete Batch */}
                 <button type="button" onClick={handleDeleteBatch} disabled={isDeletingBatch || isRunningAll}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-neutral-800 text-xs font-semibold text-neutral-500 hover:text-red-400 hover:border-red-900 transition-colors disabled:opacity-50 disabled:cursor-wait">
@@ -1188,11 +1222,20 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
             </div>
           )}
 
-          {/* Run All completion note */}
-          {anyDone && !onSwitchToLibrary && (
-            <p className="text-xs text-emerald-500 leading-relaxed">
-              Videos saved to Library. Open the <strong>Library</strong> tab to review and post.
-            </p>
+          {/* Completion note */}
+          {anyDone && (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-900/50 bg-emerald-950/20 px-4 py-3">
+              <p className="text-xs text-emerald-400 leading-relaxed">
+                {Object.values(itemGenStates).filter(s => s.status === "done").length} video{Object.values(itemGenStates).filter(s => s.status === "done").length !== 1 ? "s" : ""} saved to Library. Nothing posts automatically.
+              </p>
+              {onSwitchToLibrary && (
+                <button type="button" onClick={onSwitchToLibrary}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-900 text-xs font-semibold text-emerald-400 hover:text-emerald-300 hover:border-emerald-700 transition-colors flex-shrink-0">
+                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" /></svg>
+                  Open Library
+                </button>
+              )}
+            </div>
           )}
 
           {/* Delete batch error */}

@@ -154,6 +154,7 @@ function buildSystemPrompt(
   includeVoiceover: boolean,
   effectiveEndCard: boolean,
   allowedTagList: string,   // comma-separated list of uploaded tags, or "" if none
+  modelTagsList: string[],  // subset of uploaded tags that are model references (e.g. @model1, @model2)
 ): string {
   const guidance = BRAND_GUIDANCE[workspaceKey] ?? NEUTRAL_BRAND_GUIDANCE;
   const isUgc = batchType === "UGC Ads";
@@ -233,6 +234,16 @@ ${playsListText}
     - Brief says "official end card" → write main reel content only; app appends the end card
     Do not ignore the brief. Do not output generic prompts that ignore the brief's intent.${effectiveEndCard ? `
 19. END CARD RULE — MANDATORY: Do NOT generate, describe, or reference any end card, logo card, text card, or branded outro inside any promptText. The application automatically appends the official 1-second branded end card after the generated video. Your job is to write the Seedance prompt for the main reel content only. Every promptText must include this exact sentence at the end: "The official end card is appended automatically by the app; do not generate an end card inside Seedance."` : ""}
+20. CREATOR/MODEL VARIETY RULE — MANDATORY: Every concept MUST feature a different-looking creator or person. Do NOT repeat the same person description.
+${modelTagsList.length > 1
+  ? `Multiple model tags uploaded: ${modelTagsList.join(", ")}. ROTATE them across concepts — do NOT use the same model tag twice in a row or in more than half the concepts. Rotation order: ${modelTagsList.map((t, i) => `concept ${i + 1} → ${modelTagsList[i % modelTagsList.length]}`).slice(0, batchSize).join("; ")}.`
+  : modelTagsList.length === 1
+  ? `One model tag uploaded: ${modelTagsList[0]}. Use it consistently but vary the creator's action, expression, clothing detail, and setting in each concept so they look distinct.`
+  : `No model tags uploaded. Do NOT invent @model1 or any @model tag. Describe a DIFFERENT real-world creator type for each concept. Vary these attributes each time: age (20s, 30s, 40s), gender, style (casual, athletic, streetwear, minimal, professional), energy (relaxed, enthusiastic, playful, serious). Example types to rotate (pick one per concept, no repeats): young woman in casual wear, athletic man in gym gear, college student, entrepreneur in minimal outfit, parent at home, friend group, person in streetwear, fitness creator, person in outdoor gear. Never default to "a girl" or "a woman" for every concept.`}
+21. SCENE & LOCATION VARIETY RULE — MANDATORY: Every concept MUST use a distinct scene, location, and camera angle. Do NOT repeat the same backdrop or camera setup.
+${isUgc
+  ? `UGC Ads — rotate these scenes (one per concept, no repeats): bedroom/bathroom mirror, city sidewalk or street corner, car front seat, kitchen table unboxing, gym locker room or bag reveal, coffee shop counter, outdoor park or rooftop, plain studio or textured wall, shopping mall, staircase or hallway. Do NOT use the same background in more than one concept.`
+  : `General Reels — rotate these scenes (one per concept, no repeats): product on clean surface with dramatic lighting, outdoor lifestyle shot, extreme close-up of product detail, packaging reveal, fast-cut montage, hand-held in-use shot, cinematic overhead/flat lay, walk-by or movement shot, moody studio environment, golden-hour outdoor. Do NOT use the same visual style in more than one concept.`}
 
 JSON schema to return:
 {
@@ -404,9 +415,14 @@ export async function POST(req: NextRequest) {
 
   const allowedTagList = referenceImages.map((img) => img.tag).join(", ");
 
+  // Detect model reference tags (e.g. @model1, @model2) for rotation rule
+  const modelTagsList = referenceImages
+    .filter((img) => /model/i.test(img.tag))
+    .map((img) => img.tag);
+
   const systemPrompt = buildSystemPrompt(
     brandName, workspaceKey, batchType, batchSize, selectedPlays,
-    resolvedVoiceover, effectiveEndCard, allowedTagList,
+    resolvedVoiceover, effectiveEndCard, allowedTagList, modelTagsList,
   );
   const userPrompt = buildUserPrompt(instruction, batchSize, referenceImages, referenceImageUrl);
 
@@ -480,10 +496,24 @@ export async function POST(req: NextRequest) {
   }
 
   // 2.5 Invented-tag cleanup: remove or replace any @ tags GPT invented that weren't uploaded
+  const GENERIC_CREATORS = [
+    "a young woman in casual wear",
+    "an athletic man in gym gear",
+    "a college student",
+    "an entrepreneur in a minimal outfit",
+    "a parent at home",
+    "a group of friends",
+    "a person in streetwear",
+    "a fitness creator",
+    "a person in outdoor gear",
+    "a professional in everyday clothes",
+  ];
+
   if (referenceImages.length > 0) {
     const allowedTags = new Set(referenceImages.map((img) => img.tag.toLowerCase()));
     const primaryTag = referenceImages[0]!.tag;
-    for (const item of items) {
+    for (let idx = 0; idx < items.length; idx++) {
+      const item = items[idx]!;
       const tagMatches = item.promptText.match(/@[a-zA-Z0-9_-]+/g);
       if (tagMatches) {
         for (const tag of tagMatches) {
@@ -491,7 +521,8 @@ export async function POST(req: NextRequest) {
             const lower = tag.toLowerCase();
             let replacement: string;
             if (lower.includes("model") || lower.includes("person") || lower.includes("creator") || lower.includes("actor")) {
-              replacement = "a creator";
+              // Vary generic creator descriptions by item index
+              replacement = GENERIC_CREATORS[idx % GENERIC_CREATORS.length]!;
             } else if (lower.includes("logo")) {
               replacement = "the brand";
             } else if (lower.includes("endcard") || lower.includes("end_card") || lower.includes("end-card")) {

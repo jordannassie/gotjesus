@@ -87,35 +87,73 @@ export async function POST(
   }
 
   // ── Create gotjesus_reels row ────────────────────────────────────────────────
+  // Status is "ready" so Library shows it immediately with Post Now enabled.
+  // The background function (if it runs) will copy the video to Supabase Storage.
   const reelId = randomUUID();
 
+  const baseReelData = {
+    id: reelId,
+    status: "ready" as const,
+    generation_source: "manual" as const,
+    kie_task_id: kieTaskId ?? item.kie_task_id ?? null,
+    kie_video_url: kieVideoUrl,
+    caption_used: captionUsed || "Batch video",
+    prompt_used: item.prompt_text ?? null,
+    instagram_enabled: false,
+    tiktok_enabled: false,
+    youtube_enabled: false,
+    workspace_key: item.workspace_key,
+  };
+
+  let savedWithBatchProvenance = false;
+
   try {
+    // First attempt: with full batch provenance columns
     await createReel({
-      id: reelId,
-      status: "saving",
-      generation_source: "manual",
+      ...baseReelData,
       source: "batch",
-      kie_task_id: kieTaskId ?? item.kie_task_id ?? null,
-      kie_video_url: kieVideoUrl,
-      caption_used: captionUsed || "Batch video",
-      prompt_used: item.prompt_text ?? null,
-      instagram_enabled: false,
-      tiktok_enabled: false,
-      youtube_enabled: false,
-      workspace_key: item.workspace_key,
       batch_id: batchId,
       campaign_item_id: id,
       ad_type: item.ad_type ?? null,
       hook: item.hook ?? null,
     });
-    console.log(`[save-to-library] Created reel row ${reelId} for campaign item ${id}`);
+    savedWithBatchProvenance = true;
+    console.log(`[save-to-library] Created reel row ${reelId} (with batch provenance) for item ${id}`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[save-to-library] createReel failed for item ${id}:`, message);
-    return NextResponse.json(
-      { error: `Failed to create Library entry: ${message}` },
-      { status: 500 }
-    );
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const isPgrst204 =
+      errMsg.includes("PGRST204") ||
+      errMsg.toLowerCase().includes("could not find");
+
+    if (isPgrst204) {
+      // Batch provenance columns not yet migrated — retry without them
+      console.warn(
+        `[save-to-library] PGRST204 on batch columns — retrying without provenance. ` +
+        `Run SQL migrations:\n` +
+        `  alter table gotjesus_reels add column if not exists source text default 'content_engine';\n` +
+        `  alter table gotjesus_reels add column if not exists batch_id uuid;\n` +
+        `  alter table gotjesus_reels add column if not exists campaign_item_id uuid;\n` +
+        `  alter table gotjesus_reels add column if not exists ad_type text;\n` +
+        `  alter table gotjesus_reels add column if not exists hook text;`
+      );
+      try {
+        await createReel(baseReelData);
+        console.log(`[save-to-library] Created reel row ${reelId} (minimal — run SQL migration) for item ${id}`);
+      } catch (fallbackError) {
+        const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+        console.error(`[save-to-library] createReel fallback also failed for item ${id}:`, fallbackMsg);
+        return NextResponse.json(
+          { error: `Failed to create Library entry: ${fallbackMsg}` },
+          { status: 500 }
+        );
+      }
+    } else {
+      console.error(`[save-to-library] createReel failed for item ${id}:`, errMsg);
+      return NextResponse.json(
+        { error: `Failed to create Library entry: ${errMsg}` },
+        { status: 500 }
+      );
+    }
   }
 
   // ── Trigger save-reel-background (downloads + persists video to Supabase Storage)
@@ -149,5 +187,12 @@ export async function POST(
     // Non-fatal — reel row exists; video visible in Library via kie_video_url
   }
 
-  return NextResponse.json({ reelId, itemId: id });
+  return NextResponse.json({
+    reelId,
+    itemId: id,
+    savedWithBatchProvenance,
+    warning: savedWithBatchProvenance
+      ? undefined
+      : "Saved to Library without batch provenance — run SQL migration to link batch columns.",
+  });
 }
