@@ -5,6 +5,13 @@ import { getWorkspaceName } from "@/lib/workspaces";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface ReferenceImage {
+  id: string;       // local client-side id
+  tag: string;      // @product1, @logo, etc.
+  name: string;     // filename
+  url: string;      // public Supabase URL
+}
+
 interface BatchItem {
   title: string;
   adType: string;
@@ -27,7 +34,7 @@ interface BatchPlanResponse {
   items: BatchItem[];
 }
 
-// Per-item generation state — infrastructure for future generation step
+// Per-item generation state — infrastructure for future step
 type ItemGenStatus = "idle" | "submitting" | "generating" | "done" | "failed";
 interface ItemGenState {
   status: ItemGenStatus;
@@ -49,11 +56,117 @@ const BATCH_TYPES = [
   "Viral Social Clips",
 ];
 
-const DEFAULT_SEEDANCE_PROMPT =
-  "Create an 8-second vertical 9:16 social video using the uploaded image as the exact product/reference. Make it cinematic, fast-paced, realistic, and social-media ready.";
+const DEFAULT_TAG_NAMES = [
+  "@product1",
+  "@product2",
+  "@logo",
+  "@model1",
+  "@brandcard",
+  "@endcard",
+];
 
-const DEFAULT_CHATGPT_INSTRUCTION =
-  "Make every type of short-form ad this brand would actually need.";
+function defaultTagForIndex(index: number): string {
+  if (index < DEFAULT_TAG_NAMES.length) return DEFAULT_TAG_NAMES[index];
+  return `@ref${index + 1}`;
+}
+
+function normalizeTag(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
+}
+
+// ─── Supabase SQL hint ────────────────────────────────────────────────────────
+
+function isSqlMissingError(message: string): boolean {
+  return (
+    message.includes("42P01") ||
+    message.includes("does not exist") ||
+    message.includes("relation") ||
+    message.includes("{}") ||
+    message === "createCampaignBatch failed: {}"
+  );
+}
+
+// ─── Reference Image Card ─────────────────────────────────────────────────────
+
+function ImageCard({
+  image,
+  index,
+  allTags,
+  onChange,
+  onRemove,
+}: {
+  image: ReferenceImage;
+  index: number;
+  allTags: string[];
+  onChange: (id: string, tag: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [tagInput, setTagInput] = useState(image.tag);
+  const [tagError, setTagError] = useState("");
+
+  const handleTagBlur = () => {
+    const normalized = normalizeTag(tagInput);
+    if (!normalized) {
+      setTagInput(image.tag);
+      setTagError("");
+      return;
+    }
+    // Check duplicate
+    const otherTags = allTags.filter((_, i) => i !== index);
+    if (otherTags.includes(normalized)) {
+      setTagError("Duplicate tag");
+      return;
+    }
+    setTagError("");
+    setTagInput(normalized);
+    onChange(image.id, normalized);
+  };
+
+  const handleTagChange = (v: string) => {
+    setTagInput(v);
+    setTagError("");
+  };
+
+  return (
+    <div className="flex items-start gap-2.5 p-2.5 rounded-xl border border-neutral-800 bg-neutral-900/60">
+      {/* Thumbnail */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={image.url}
+        alt={image.name}
+        className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-neutral-700"
+      />
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
+        <p className="text-[10px] font-medium text-neutral-300 truncate leading-tight">{image.name}</p>
+        <div className="flex flex-col gap-0.5">
+          <input
+            type="text"
+            value={tagInput}
+            onChange={(e) => handleTagChange(e.target.value)}
+            onBlur={handleTagBlur}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
+            className={`w-full bg-neutral-800 border rounded-lg px-2 py-1 text-[11px] font-mono text-neutral-200 outline-none transition-colors ${
+              tagError ? "border-red-800 focus:border-red-600" : "border-neutral-700 focus:border-neutral-500"
+            }`}
+            placeholder="@tag"
+          />
+          {tagError && <p className="text-[10px] text-red-400">{tagError}</p>}
+        </div>
+      </div>
+      {/* Remove */}
+      <button
+        type="button"
+        onClick={() => onRemove(image.id)}
+        title="Remove image"
+        className="w-6 h-6 flex items-center justify-center rounded-md border border-neutral-700 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors flex-shrink-0 mt-0.5"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 // ─── Concept Card ─────────────────────────────────────────────────────────────
 
@@ -96,11 +209,9 @@ function ConceptCard({
         <div className="flex flex-col gap-0.5 min-w-0 flex-1">
           <span className="text-sm font-semibold text-white leading-tight">{item.title}</span>
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Style badge — replaces platform badge */}
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-700 text-neutral-400">
               {item.adType}
-            </span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-600">
-              {item.platform}
             </span>
             <span className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-600">
               {item.durationSeconds}s · {item.aspectRatio}
@@ -125,11 +236,9 @@ function ConceptCard({
             {(() => {
               const gs = genState;
               const gsStatus = gs?.status ?? "idle";
-              const isRunning = gsStatus === "submitting" || gsStatus === "generating";
-
               if (gsStatus === "done" && gs?.videoUrl) {
                 return (
-                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-900 flex-shrink-0">
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-900">
                     <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
@@ -137,34 +246,17 @@ function ConceptCard({
                   </span>
                 );
               }
-
               return (
                 <button
                   type="button"
-                  disabled={isRunning || true}
+                  disabled
                   title="Video generation coming next step"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 text-[11px] font-medium text-neutral-700 cursor-not-allowed opacity-60 flex-shrink-0"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-neutral-800 text-[11px] font-medium text-neutral-700 cursor-not-allowed opacity-60"
                 >
-                  {isRunning ? (
-                    <>
-                      <span
-                        className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
-                        style={{
-                          border: "2px solid transparent",
-                          borderTopColor: "#a3e635",
-                          borderRightColor: "#22d3ee",
-                        }}
-                      />
-                      {gsStatus === "submitting" ? "Starting…" : "Generating…"}
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                      </svg>
-                      Generate Video
-                    </>
-                  )}
+                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                  </svg>
+                  Generate Video
                 </button>
               );
             })()}
@@ -175,7 +267,7 @@ function ConceptCard({
               onClick={handleDelete}
               disabled={isDeleting}
               title="Delete this concept"
-              className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors flex-shrink-0 disabled:opacity-40"
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-neutral-800 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors disabled:opacity-40"
             >
               <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
@@ -223,7 +315,7 @@ function ConceptCard({
             className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-600 hover:text-neutral-400 transition-colors w-fit"
           >
             <span
-              className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+              className="inline-block w-1.5 h-1.5 rounded-full"
               style={{ background: "linear-gradient(135deg, #a3e635, #22d3ee)" }}
             />
             Seedance Prompt
@@ -238,30 +330,24 @@ function ConceptCard({
           )}
         </div>
 
-        {/* Generation status (future step) */}
+        {/* Generation status (rendered when generation is enabled) */}
         {genState && genState.status !== "idle" && (
           <div className="mt-1">
             {(genState.status === "submitting" || genState.status === "generating") && (
               <div className="flex items-center gap-2 text-xs text-neutral-500">
                 <span
-                  className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
+                  className="w-2.5 h-2.5 rounded-full animate-spin inline-block"
                   style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }}
                 />
-                {genState.status === "submitting"
-                  ? "Submitting to Kie.ai…"
-                  : `Generating… (task: ${genState.kieTaskId?.slice(0, 8)}…)`}
+                {genState.status === "submitting" ? "Submitting to Kie.ai…" : `Generating… (${genState.kieTaskId?.slice(0, 8)}…)`}
               </div>
             )}
             {genState.status === "failed" && genState.error && (
-              <p className="text-[11px] text-red-400 leading-relaxed">{genState.error}</p>
+              <p className="text-[11px] text-red-400">{genState.error}</p>
             )}
             {genState.status === "done" && genState.videoUrl && (
-              <a
-                href={genState.videoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[11px] text-emerald-400 hover:text-emerald-300 underline underline-offset-2 transition-colors"
-              >
+              <a href={genState.videoUrl} target="_blank" rel="noopener noreferrer"
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 underline underline-offset-2">
                 View video ↗
               </a>
             )}
@@ -281,26 +367,30 @@ interface Props {
 export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
   const brandName = getWorkspaceName(workspaceKey);
 
-  // ── Image upload ────────────────────────────────────────────────────────────
-  const [referenceImageUrl, setReferenceImageUrl] = useState("");
-  const [uploadedImageName, setUploadedImageName] = useState("");
+  // ── Reference images (multi-upload) ────────────────────────────────────────
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [showUrlFallback, setShowUrlFallback] = useState(false);
+  const [urlFallbackValue, setUrlFallbackValue] = useState("");
   const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Mode: manual Seedance prompt vs ChatGPT prompt builder ─────────────────
+  // ── Mode ─────────────────────────────────────────────────────────────────────
   const [useChatGPT, setUseChatGPT] = useState(false);
-  const [seedancePrompt, setSeedancePrompt] = useState(DEFAULT_SEEDANCE_PROMPT);
-  const [chatGptInstruction, setChatGptInstruction] = useState(DEFAULT_CHATGPT_INSTRUCTION);
+  const [seedancePrompt, setSeedancePrompt] = useState(
+    "Create an 8-second vertical 9:16 reel using @product1 as the exact product reference. Make it cinematic, fast-paced, and social-media ready."
+  );
+  const [chatGptInstruction, setChatGptInstruction] = useState(
+    "Make every type of short-form ad this brand would actually need."
+  );
   const [batchType, setBatchType] = useState(BATCH_TYPES[0]);
 
-  // ── ChatGPT batch plan state ────────────────────────────────────────────────
+  // ── ChatGPT batch plan ───────────────────────────────────────────────────────
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
   const [batchPlan, setBatchPlan] = useState<BatchPlanResponse | null>(null);
 
-  // ── Save state ──────────────────────────────────────────────────────────────
+  // ── Save state ───────────────────────────────────────────────────────────────
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [savedBatchData, setSavedBatchData] = useState<{
@@ -308,46 +398,78 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     itemIds: string[];
   } | null>(null);
 
-  // ── Delete state ────────────────────────────────────────────────────────────
+  // ── Delete state ─────────────────────────────────────────────────────────────
   const [isDeletingBatch, setIsDeletingBatch] = useState(false);
   const [deleteBatchError, setDeleteBatchError] = useState("");
   const [deletedItemIds, setDeletedItemIds] = useState<string[]>([]);
 
-  // Refs used by generation (wired to UI in next step)
-  const itemTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
-  // ── Per-item video generation state (displayed in cards; generation wired in next step)
+  // ── Gen state (future step) ──────────────────────────────────────────────────
   const [itemGenStates] = useState<Record<string, ItemGenState>>({});
 
-  // ── Image upload handler ────────────────────────────────────────────────────
+  // Ref for cleanup on batch delete/new batch
+  const itemTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // ── Derived ───────────────────────────────────────────────────────────────────
+  const firstImageUrl =
+    referenceImages[0]?.url ?? urlFallbackValue.trim() ?? "";
+  const allTags = referenceImages.map((img) => img.tag);
+
+  // ── Upload handler (loop over multiple files) ─────────────────────────────────
 
   const handleImageUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+      const files = Array.from(e.target.files ?? []);
+      if (!files.length) return;
       e.target.value = "";
       setIsUploading(true);
       setUploadError("");
-      try {
-        const form = new FormData();
-        form.append("file", file);
-        form.append("workspaceKey", workspaceKey);
-        const res = await fetch("/api/campaign-batches/upload", { method: "POST", body: form });
-        const data = (await res.json()) as { url?: string; name?: string; error?: string };
-        if (!res.ok || !data.url) throw new Error(data.error ?? "Upload failed.");
-        setReferenceImageUrl(data.url);
-        setUploadedImageName(data.name ?? file.name);
-        setShowUrlFallback(false);
-      } catch (err) {
-        setUploadError(err instanceof Error ? err.message : "Image upload failed.");
-      } finally {
-        setIsUploading(false);
+
+      const newImages: ReferenceImage[] = [];
+      const startIndex = referenceImages.length;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const form = new FormData();
+          form.append("file", file);
+          form.append("workspaceKey", workspaceKey);
+          const res = await fetch("/api/campaign-batches/upload", {
+            method: "POST",
+            body: form,
+          });
+          const data = (await res.json()) as { url?: string; name?: string; error?: string };
+          if (!res.ok || !data.url) throw new Error(data.error ?? "Upload failed.");
+          newImages.push({
+            id: `img-${Date.now()}-${i}`,
+            tag: defaultTagForIndex(startIndex + newImages.length),
+            name: data.name ?? file.name,
+            url: data.url,
+          });
+        } catch (err) {
+          setUploadError(err instanceof Error ? err.message : "Image upload failed.");
+        }
       }
+
+      if (newImages.length > 0) {
+        setReferenceImages((prev) => [...prev, ...newImages]);
+        setShowUrlFallback(false);
+      }
+      setIsUploading(false);
     },
-    [workspaceKey]
+    [workspaceKey, referenceImages.length]
   );
 
-  // ── ChatGPT: Create 8 prompts ───────────────────────────────────────────────
+  const handleTagChange = useCallback((id: string, newTag: string) => {
+    setReferenceImages((prev) =>
+      prev.map((img) => (img.id === id ? { ...img, tag: newTag } : img))
+    );
+  }, []);
+
+  const handleRemoveImage = useCallback((id: string) => {
+    setReferenceImages((prev) => prev.filter((img) => img.id !== id));
+  }, []);
+
+  // ── Create 8 prompts ──────────────────────────────────────────────────────────
 
   const canCreatePrompts = chatGptInstruction.trim().length > 0 && !isGenerating && !isSaving;
 
@@ -367,7 +489,8 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
           brandName,
           instruction: chatGptInstruction.trim(),
           batchType,
-          referenceImageUrl: referenceImageUrl.trim() || undefined,
+          referenceImages: referenceImages.map(({ tag, name, url }) => ({ tag, name, url })),
+          referenceImageUrl: firstImageUrl || undefined,
           batchSize: 8,
         }),
       });
@@ -379,9 +502,9 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     } finally {
       setIsGenerating(false);
     }
-  }, [workspaceKey, brandName, chatGptInstruction, batchType, referenceImageUrl, canCreatePrompts]);
+  }, [workspaceKey, brandName, chatGptInstruction, batchType, referenceImages, firstImageUrl, canCreatePrompts]);
 
-  // ── Save batch plan ─────────────────────────────────────────────────────────
+  // ── Save batch ────────────────────────────────────────────────────────────────
 
   const handleSave = useCallback(async () => {
     if (!batchPlan || isSaving || savedBatchData) return;
@@ -397,7 +520,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
           batchTitle: batchPlan.batchTitle,
           batchType: batchPlan.batchType,
           instruction: chatGptInstruction.trim(),
-          referenceImageUrl: referenceImageUrl.trim() || undefined,
+          referenceImageUrl: firstImageUrl || undefined,
           items: batchPlan.items.map((item) => ({
             title: item.title,
             adType: item.adType,
@@ -420,10 +543,10 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
         detail?: string;
       };
       if (!res.ok) {
-        const msg = data.detail
+        const rawMsg = data.detail
           ? `${data.error ?? "Save failed"}: ${data.detail}`
           : (data.error ?? `HTTP ${res.status}`);
-        throw new Error(msg);
+        throw new Error(rawMsg);
       }
       if (!data.batch?.id) throw new Error("Save succeeded but batch ID was missing.");
       setSavedBatchData({
@@ -435,9 +558,9 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     } finally {
       setIsSaving(false);
     }
-  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, chatGptInstruction, referenceImageUrl]);
+  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, chatGptInstruction, firstImageUrl]);
 
-  // ── Delete batch ────────────────────────────────────────────────────────────
+  // ── Delete batch ──────────────────────────────────────────────────────────────
 
   const handleDeleteBatch = useCallback(async () => {
     if (!savedBatchData || isDeletingBatch) return;
@@ -453,7 +576,6 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
       if (!res.ok || !data.success) {
         throw new Error(data.error ?? `Delete failed (HTTP ${res.status})`);
       }
-      // Clear timers, reset to new-batch state (keep image)
       Object.values(itemTimers.current).forEach(clearTimeout);
       itemTimers.current = {};
       setBatchPlan(null);
@@ -468,32 +590,19 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     }
   }, [savedBatchData, isDeletingBatch]);
 
-  // ── Delete single item ──────────────────────────────────────────────────────
+  // ── Delete single item ────────────────────────────────────────────────────────
 
-  const handleDeleteItem = useCallback(
-    async (itemId: string) => {
-      try {
-        const res = await fetch(
-          `/api/campaign-items/${encodeURIComponent(itemId)}`,
-          { method: "DELETE" }
-        );
-        const data = (await res.json()) as { success?: boolean; error?: string };
-        if (!res.ok || !data.success) {
-          console.error("[BatchTab] Delete item failed:", data.error);
-        }
-      } catch (err) {
-        console.error("[BatchTab] Delete item error:", err);
-      } finally {
-        // Remove from UI regardless of API result
-        setDeletedItemIds((prev) => [...prev, itemId]);
-      }
-    },
-    []
-  );
+  const handleDeleteItem = useCallback(async (itemId: string) => {
+    try {
+      await fetch(`/api/campaign-items/${encodeURIComponent(itemId)}`, { method: "DELETE" });
+    } catch (err) {
+      console.error("[BatchTab] Delete item error:", err);
+    } finally {
+      setDeletedItemIds((prev) => [...prev, itemId]);
+    }
+  }, []);
 
-  // Generation helpers will be wired to UI buttons in the next step.
-
-  // ── New Batch — keeps image, clears plan/results ─────────────────────────────
+  // ── New Batch — keeps images, clears plan ─────────────────────────────────────
 
   const handleNewBatch = useCallback(() => {
     Object.values(itemTimers.current).forEach(clearTimeout);
@@ -504,21 +613,10 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     setSavedBatchData(null);
     setDeletedItemIds([]);
     setDeleteBatchError("");
-    // Image is intentionally preserved — user may want a new prompt on the same product.
+    // Images intentionally preserved — user may want a new prompt with the same images.
   }, []);
 
-  // ── Derived ──────────────────────────────────────────────────────────────────
-
-  // Items visible in UI — excludes items the user has deleted
-  const visibleItems = batchPlan
-    ? batchPlan.items.filter((_, i) => {
-        const itemId = savedBatchData?.itemIds[i];
-        return !itemId || !deletedItemIds.includes(itemId);
-      })
-    : [];
-
-
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col gap-6">
@@ -532,7 +630,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
         </div>
         <h2 className="text-base font-bold text-white tracking-tight">Reel Batch Generator</h2>
         <p className="text-xs text-neutral-500 leading-relaxed max-w-lg">
-          Upload one image. Write a prompt. Generate Seedance 2.0 reels.
+          Upload reference images. Tag them. Write a prompt. Generate Seedance 2.0 reels.
         </p>
       </div>
 
@@ -547,75 +645,69 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
 
         <div className="px-5 py-5 flex flex-col gap-5">
 
-          {/* 1 — Reference Image upload */}
-          <div className="flex flex-col gap-2">
-            <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
-              Upload Reference Image
-            </label>
-            <p className="text-[10px] text-neutral-700 leading-relaxed">
-              Upload a product, shirt, logo, app screen, brand visual, or any image you want to use.
-            </p>
+          {/* 1 — Reference Images */}
+          <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
+                Reference Images
+              </label>
+              <p className="text-[10px] text-neutral-700 leading-relaxed">
+                Upload products, logos, brand visuals, or models. Each gets a tag like <span className="font-mono text-neutral-500">@product1</span> you can use in your prompt.
+              </p>
+            </div>
 
+            {/* Uploaded image grid */}
+            {referenceImages.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {referenceImages.map((img, i) => (
+                  <ImageCard
+                    key={img.id}
+                    image={img}
+                    index={i}
+                    allTags={allTags}
+                    onChange={handleTagChange}
+                    onRemove={handleRemoveImage}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Upload button */}
             <input
               ref={imageInputRef}
               type="file"
               accept="image/jpeg,image/png,image/webp"
+              multiple
               className="hidden"
               onChange={handleImageUpload}
             />
-
-            {uploadedImageName && referenceImageUrl ? (
-              /* Uploaded image preview */
-              <div className="flex items-center gap-3 p-3 rounded-xl border border-neutral-800 bg-neutral-900/60">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={referenceImageUrl}
-                  alt={uploadedImageName}
-                  className="w-14 h-14 rounded-lg object-cover flex-shrink-0 border border-neutral-700"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-neutral-200 truncate">{uploadedImageName}</p>
-                  <p className="text-[10px] text-neutral-600 mt-0.5">Reference image</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setReferenceImageUrl(""); setUploadedImageName(""); setUploadError(""); }}
-                  className="w-6 h-6 flex items-center justify-center rounded-md border border-neutral-700 text-neutral-600 hover:text-red-400 hover:border-red-900 transition-colors flex-shrink-0"
-                  title="Remove image"
-                >
-                  ×
-                </button>
-              </div>
-            ) : (
-              /* Upload button */
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                disabled={isUploading}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-neutral-700 text-xs text-neutral-500 hover:text-neutral-300 hover:border-neutral-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed w-fit"
-              >
-                {isUploading ? (
-                  <>
-                    <span
-                      className="w-3 h-3 rounded-full animate-spin inline-block flex-shrink-0"
-                      style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }}
-                    />
-                    Uploading…
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                    </svg>
-                    + Upload Image
-                  </>
-                )}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              disabled={isUploading}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-neutral-700 text-xs text-neutral-500 hover:text-neutral-300 hover:border-neutral-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed w-fit"
+            >
+              {isUploading ? (
+                <>
+                  <span
+                    className="w-3 h-3 rounded-full animate-spin inline-block"
+                    style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }}
+                  />
+                  Uploading…
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                  </svg>
+                  {referenceImages.length > 0 ? "+ Add Another Image" : "+ Upload Image"}
+                </>
+              )}
+            </button>
 
             {uploadError && <p className="text-[11px] text-red-400">{uploadError}</p>}
 
-            {/* URL fallback — collapsed by default */}
+            {/* URL fallback — collapsed */}
             <div className="flex flex-col gap-1.5">
               <button
                 type="button"
@@ -627,33 +719,37 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
               {showUrlFallback && (
                 <input
                   type="url"
-                  value={uploadedImageName ? "" : referenceImageUrl}
-                  onChange={(e) => { setReferenceImageUrl(e.target.value); setUploadedImageName(""); }}
-                  disabled={!!uploadedImageName}
+                  value={urlFallbackValue}
+                  onChange={(e) => setUrlFallbackValue(e.target.value)}
                   placeholder="https://..."
-                  className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors"
                 />
               )}
             </div>
           </div>
 
-          {/* 2 — Seedance Prompt (shown when ChatGPT is OFF) */}
+          {/* 2 — Seedance Prompt (ChatGPT OFF) */}
           {!useChatGPT && (
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
-                Seedance Prompt
-              </label>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
+                  Seedance Prompt
+                </label>
+                <p className="text-[10px] text-neutral-700 leading-relaxed">
+                  Use image tags like <span className="font-mono text-neutral-500">@product1</span>, <span className="font-mono text-neutral-500">@logo</span>, or <span className="font-mono text-neutral-500">@model1</span> in your prompt.
+                </p>
+              </div>
               <textarea
                 value={seedancePrompt}
                 onChange={(e) => setSeedancePrompt(e.target.value)}
-                placeholder="Describe the 9:16 reel you want Seedance to create from this image…"
+                placeholder="Create an 8-second vertical 9:16 reel using @product1 as the exact product reference…"
                 rows={4}
                 className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors leading-relaxed"
               />
             </div>
           )}
 
-          {/* 3 — ChatGPT Prompt Builder toggle */}
+          {/* 3 — ChatGPT toggle */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-0.5">
@@ -662,19 +758,15 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                 </span>
                 <p className="text-[10px] text-neutral-700 leading-relaxed max-w-sm">
                   {useChatGPT
-                    ? "ChatGPT will create 8 Seedance-ready reel prompts. Review and generate videos from each one."
-                    : "When on, ChatGPT creates 8 Seedance-ready reel prompts for you."}
+                    ? "ChatGPT creates 8 Seedance-ready, platform-neutral prompts. No videos are generated yet."
+                    : "When on, ChatGPT creates 8 Seedance-ready reel prompts from your brief and tagged images."}
                 </p>
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={useChatGPT}
-                onClick={() => {
-                  setUseChatGPT((v) => !v);
-                  setBatchPlan(null);
-                  setGenerateError("");
-                }}
+                onClick={() => { setUseChatGPT((v) => !v); setBatchPlan(null); setGenerateError(""); }}
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 cursor-pointer ml-4 ${
                   useChatGPT ? "bg-emerald-500" : "bg-neutral-700"
                 }`}
@@ -683,10 +775,8 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
               </button>
             </div>
 
-            {/* ChatGPT ON: show batch type + campaign brief */}
             {useChatGPT && (
-              <div className="flex flex-col gap-4 mt-1 pl-0 pt-2 border-t border-neutral-800/60">
-
+              <div className="flex flex-col gap-4 mt-1 pt-2 border-t border-neutral-800/60">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
                     Batch Type
@@ -695,7 +785,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                     value={batchType}
                     onChange={(e) => setBatchType(e.target.value)}
                     disabled={isGenerating}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed [color-scheme:dark]"
+                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors cursor-pointer disabled:opacity-50 [color-scheme:dark]"
                   >
                     {BATCH_TYPES.map((t) => (
                       <option key={t} value={t} className="bg-neutral-900">{t}</option>
@@ -704,19 +794,23 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
-                    Campaign Brief
-                  </label>
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
+                      Campaign Brief
+                    </label>
+                    <p className="text-[10px] text-neutral-700 leading-relaxed">
+                      Tell ChatGPT what kind of prompts to create. It can use your tagged images like <span className="font-mono text-neutral-500">@product1</span>, <span className="font-mono text-neutral-500">@logo</span>, and <span className="font-mono text-neutral-500">@model1</span>.
+                    </p>
+                  </div>
                   <textarea
                     value={chatGptInstruction}
                     onChange={(e) => setChatGptInstruction(e.target.value)}
                     disabled={isGenerating}
                     placeholder="Describe the campaign goal, tone, audience, and key message."
                     rows={3}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed leading-relaxed"
+                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors disabled:opacity-50 leading-relaxed"
                   />
                 </div>
-
               </div>
             )}
           </div>
@@ -726,7 +820,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
             {useChatGPT ? (
               <>
                 <p className="text-[11px] text-neutral-600 leading-relaxed max-w-xs">
-                  ChatGPT creates 8 Seedance-ready prompts. No videos are generated yet.
+                  ChatGPT creates 8 platform-neutral Seedance prompts. No videos are generated yet.
                 </p>
                 <button
                   type="button"
@@ -741,7 +835,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                   {isGenerating ? (
                     <>
                       <span
-                        className="w-4 h-4 rounded-full animate-spin inline-block flex-shrink-0"
+                        className="w-4 h-4 rounded-full animate-spin inline-block"
                         style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }}
                       />
                       Creating Prompts…
@@ -764,8 +858,8 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                 <button
                   type="button"
                   disabled
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-neutral-800 text-neutral-600 cursor-not-allowed opacity-60"
                   title="Single reel generation coming next step"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-neutral-800 text-neutral-600 cursor-not-allowed opacity-60"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
@@ -787,7 +881,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
         </div>
       )}
 
-      {/* ChatGPT results — 8 concept cards */}
+      {/* ChatGPT results */}
       {batchPlan && (
         <div className="flex flex-col gap-4">
 
@@ -795,7 +889,10 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-600">
-                {visibleItems.length} / {batchPlan.items.length} Prompts
+                {batchPlan.items.filter((_, i) => {
+                  const id = savedBatchData?.itemIds[i];
+                  return !id || !deletedItemIds.includes(id);
+                }).length} / {batchPlan.items.length} Prompts
               </span>
               <h3 className="text-sm font-bold text-white">{batchPlan.batchTitle}</h3>
               <span className="text-[10px] text-neutral-600">
@@ -817,7 +914,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                   {isSaving ? (
                     <>
                       <span
-                        className="w-3.5 h-3.5 rounded-full animate-spin inline-block flex-shrink-0"
+                        className="w-3.5 h-3.5 rounded-full animate-spin inline-block"
                         style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }}
                       />
                       Saving…
@@ -842,11 +939,16 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
             </div>
           </div>
 
-          {/* Save error */}
+          {/* Save error — with SQL hint */}
           {saveError && (
-            <div className="rounded-xl border border-red-900 bg-red-950/30 px-4 py-3">
-              <p className="text-xs font-semibold text-red-400 mb-0.5">Save failed</p>
+            <div className="rounded-xl border border-red-900 bg-red-950/30 px-4 py-3 flex flex-col gap-1.5">
+              <p className="text-xs font-semibold text-red-400">Save failed</p>
               <p className="text-xs text-red-500 leading-relaxed">{saveError}</p>
+              {isSqlMissingError(saveError) && (
+                <p className="text-[11px] text-amber-500 leading-relaxed mt-0.5 border-t border-red-900/50 pt-1.5">
+                  <strong>SQL required:</strong> Run the <code className="font-mono">campaign_batches</code> and <code className="font-mono">campaign_items</code> migrations in your Supabase SQL editor before saving a batch.
+                </p>
+              )}
             </div>
           )}
 
@@ -854,15 +956,12 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
           {savedBatchData && (
             <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <svg className="w-3.5 h-3.5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                <span className="text-xs font-semibold text-emerald-400">
-                  Batch saved · {visibleItems.length} concepts ready
-                </span>
+                <span className="text-xs font-semibold text-emerald-400">Batch saved · ready to generate</span>
               </div>
               <div className="flex items-center gap-2">
-                {/* Run All Videos — disabled until next step */}
                 <button
                   type="button"
                   disabled
@@ -874,8 +973,6 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                   </svg>
                   Run All Videos
                 </button>
-
-                {/* Delete Batch */}
                 <button
                   type="button"
                   onClick={handleDeleteBatch}
@@ -884,10 +981,8 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                 >
                   {isDeletingBatch ? (
                     <>
-                      <span
-                        className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
-                        style={{ border: "2px solid transparent", borderTopColor: "#ef4444", borderRightColor: "#ef4444" }}
-                      />
+                      <span className="w-2.5 h-2.5 rounded-full animate-spin inline-block"
+                        style={{ border: "2px solid transparent", borderTopColor: "#ef4444", borderRightColor: "#ef4444" }} />
                       Deleting…
                     </>
                   ) : (
@@ -907,12 +1002,15 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
           {deleteBatchError && (
             <div className="rounded-xl border border-red-900 bg-red-950/30 px-4 py-3">
               <p className="text-xs font-semibold text-red-400 mb-0.5">Delete failed</p>
-              <p className="text-xs text-red-500 leading-relaxed">{deleteBatchError}</p>
+              <p className="text-xs text-red-500">{deleteBatchError}</p>
             </div>
           )}
 
           {/* Concept cards grid */}
-          {visibleItems.length > 0 ? (
+          {batchPlan.items.some((_, i) => {
+            const id = savedBatchData?.itemIds[i];
+            return !id || !deletedItemIds.includes(id);
+          }) ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {batchPlan.items.map((item, i) => {
                 const itemId = savedBatchData?.itemIds[i];
@@ -931,25 +1029,25 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
               })}
             </div>
           ) : savedBatchData ? (
-            <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/30 px-6 py-10 flex flex-col items-center justify-center gap-3 text-center">
+            <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/30 px-6 py-10 flex flex-col items-center gap-3 text-center">
               <p className="text-sm text-neutral-600">All concepts deleted.</p>
               <button
                 type="button"
                 onClick={handleNewBatch}
-                className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors border border-neutral-800 rounded-lg px-3 py-1.5"
+                className="text-xs text-neutral-500 hover:text-neutral-300 border border-neutral-800 rounded-lg px-3 py-1.5 transition-colors"
               >
                 Start New Batch
               </button>
             </div>
           ) : null}
 
-          {!savedBatchData && visibleItems.length > 0 && (
+          {!savedBatchData && (
             <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 px-5 py-4 flex items-start gap-3">
               <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
               </svg>
               <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-semibold text-neutral-300">Review these prompts first.</span>
+                <span className="text-xs font-semibold text-neutral-300">Review before saving.</span>
                 <p className="text-xs text-neutral-500 leading-relaxed">
                   Save the batch to enable per-prompt video generation. Nothing generates or posts yet.
                 </p>
@@ -959,15 +1057,15 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
         </div>
       )}
 
-      {/* Empty state — ChatGPT mode, no results yet */}
+      {/* Empty state */}
       {useChatGPT && !batchPlan && !isGenerating && (
-        <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/30 px-6 py-10 flex flex-col items-center justify-center gap-3 text-center">
+        <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/30 px-6 py-10 flex flex-col items-center gap-3 text-center">
           <svg className="w-8 h-8 text-neutral-700" viewBox="0 0 20 20" fill="currentColor">
             <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
           </svg>
           <p className="text-sm text-neutral-600">8 Seedance prompts will appear here.</p>
           <p className="text-xs text-neutral-700 max-w-xs leading-relaxed">
-            Upload an image, write a brief, and click Create 8 Prompts.
+            Upload images, tag them, write a brief, and click Create 8 Prompts.
           </p>
         </div>
       )}
@@ -980,7 +1078,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
         <div className="flex flex-col gap-0.5">
           <span className="text-xs font-semibold text-neutral-300">Nothing posts automatically.</span>
           <p className="text-xs text-neutral-500 leading-relaxed">
-            Batch videos save to Library for review. You choose which ones to post.
+            Batch videos save to Library for review. Post to any connected platform from there.
           </p>
         </div>
       </div>
@@ -988,4 +1086,3 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
     </div>
   );
 }
-

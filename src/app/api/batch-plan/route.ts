@@ -1,7 +1,7 @@
 /**
  * POST /api/batch-plan
  *
- * Uses OpenAI to generate exactly 8 video campaign concepts for a brand.
+ * Uses OpenAI to generate exactly 8 platform-neutral video campaign concepts.
  * Returns structured JSON ready for Seedance 2.0 generation.
  *
  * This route ONLY generates concepts. It does not:
@@ -10,18 +10,25 @@
  *   - Post to any social platform
  *
  * Body:
- *   workspaceKey     string    optional  default "gotjesus"
- *   brandName        string    optional  default "Got Jesus?"
- *   instruction      string   REQUIRED
- *   batchType        string    optional  default "Faith / Ministry Reels"
- *   referenceImageUrl string   optional
- *   batchSize        number    optional  default 8, max 8
+ *   workspaceKey      string    optional  default "gotjesus"
+ *   brandName         string    optional  default "Got Jesus?"
+ *   instruction       string   REQUIRED
+ *   batchType         string    optional  default "General Product Ads"
+ *   referenceImages   Array<{ tag, name?, url }>  optional  tagged reference images
+ *   referenceImageUrl string    optional  legacy single-image fallback
+ *   batchSize         number    optional  default 8, max 8
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface ReferenceImage {
+  tag: string;
+  name?: string;
+  url: string;
+}
 
 export interface BatchItem {
   title: string;
@@ -30,7 +37,7 @@ export interface BatchItem {
   promptText: string;
   caption: string;
   reason: string;
-  platform: string;
+  platform: string;      // always "All Platforms" — kept for backwards compat
   durationSeconds: number;
   aspectRatio: string;
   resolution: string;
@@ -47,9 +54,8 @@ export interface BatchPlanResponse {
 
 // ─── Per-brand style guidance ─────────────────────────────────────────────────
 
-// Fallback is used for any workspace not listed here — keeps output neutral.
 const NEUTRAL_BRAND_GUIDANCE =
-  "Match the tone, style, and content to the brand name, batch type, and campaign brief provided. Do not invent product claims, slogans, or brand promises not found in the brief or reference image.";
+  "Match the tone, style, and content to the brand name, batch type, and campaign brief provided. Do not invent product claims, slogans, or brand promises not found in the brief or reference images.";
 
 const BRAND_GUIDANCE: Record<string, string> = {
   gotjesus:
@@ -82,17 +88,17 @@ STRICT RULES — follow these exactly:
 1. Output ONLY valid JSON. No markdown, no explanation, no code fences.
 2. Generate exactly 8 items in the "items" array.
 3. Each video concept is 8 seconds long, 9:16 vertical format.
-4. Do NOT invent logos, slogans, shirt text, product claims, pricing, or brand promises not present in the brief or reference image.
+4. Do NOT invent logos, slogans, shirt text, product claims, pricing, or brand promises not present in the brief or reference images.
 5. Do NOT add religious, faith, or spiritual language unless the brand context or instruction specifically calls for it.
 6. Do NOT mention AI in any video concept.
 7. Do NOT include end-card or outro instructions in promptText.
 8. Do NOT use placeholder words like "[product]" or "[your brand]".
-9. Each concept must be visually and thematically distinct from the others — vary format, tone, and angle.
-10. promptText must be Seedance-ready: describe subject, action, setting, camera movement, and lighting concisely.
+9. Each concept must be visually and thematically distinct — vary style, tone, setting, and approach.
+10. promptText must be Seedance-ready: subject, action, setting, camera movement, lighting. Under 300 characters.
 11. Caption must be social-ready with relevant hashtags and a call to action.
-12. Keep promptText under 300 characters.
-13. For a General Product Ads batch type, create a diverse mix:
-    UGC-style ad, product demo, lifestyle scene, testimonial-style, problem-solution, cinematic brand shot, hook-based social clip, wildcard viral concept.
+12. PLATFORM RULE: Do NOT write concepts for a specific platform. Every concept must work for Instagram Reels, TikTok, YouTube Shorts, and Facebook Reels equally. Do not mention platform names in promptText.
+13. VIDEO STYLE VARIETY: Vary the style across the 8 concepts — use: UGC-style, lifestyle scene, product demo, testimonial-style, problem-solution, cinematic brand shot, hook-based social clip, unboxing/reveal.
+14. IMAGE TAG RULE: If reference images are provided with tags like @product1 or @logo, use those exact tags in promptText when referencing the image. Do not invent visual details that contradict the tagged image.
 
 JSON schema to return:
 {
@@ -100,12 +106,11 @@ JSON schema to return:
   "items": [
     {
       "title": "short concept title",
-      "adType": "one of: Hook, Testimonial, Product Feature, Lifestyle, UGC, Motivational, Explainer, Transformation",
+      "adType": "one of: Hook, Testimonial, Product Demo, Lifestyle, UGC, Cinematic, Unboxing, Problem-Solution",
       "hook": "the first 3 seconds — what grabs attention immediately",
-      "promptText": "Seedance-ready video generation prompt",
+      "promptText": "Seedance-ready video generation prompt. Reference tagged images by their exact tag.",
       "caption": "social post caption with hashtags",
-      "reason": "1 sentence on why this concept works for this brand",
-      "platform": "one of: Instagram, TikTok, YouTube Shorts, All"
+      "reason": "1 sentence on why this concept works for this brand"
     }
   ]
 }`;
@@ -113,13 +118,33 @@ JSON schema to return:
 
 function buildUserPrompt(
   instruction: string,
-  referenceImageUrl?: string,
+  referenceImages: ReferenceImage[],
+  legacyImageUrl?: string,
 ): string {
-  const imageNote = referenceImageUrl
-    ? `\n\nReference image provided: ${referenceImageUrl}\nUse the visual content of this image — colours, subjects, style, setting — as the anchor for all 8 concepts. Preserve any visible brand details exactly.`
-    : "";
+  let imageSection = "";
 
-  return `Campaign brief: ${instruction}${imageNote}
+  if (referenceImages.length > 0) {
+    const imageList = referenceImages
+      .map((img) => `  - ${img.tag}: ${img.url}${img.name ? ` (${img.name})` : ""}`)
+      .join("\n");
+    imageSection = `
+
+Reference images (tagged):
+${imageList}
+
+Use these tags exactly when writing Seedance prompts:
+- Reference each image by its tag (e.g. @product1, @logo) when relevant.
+- Treat @product images as the exact product/design reference — preserve all visible details.
+- Do not invent product details, text, or design elements not visible in the image.
+- You may use multiple tags in one prompt if it makes sense (e.g. "@model1 holding @product1").`;
+  } else if (legacyImageUrl) {
+    imageSection = `
+
+Reference image: ${legacyImageUrl}
+Use the visual content of this image as the anchor for all 8 concepts. Preserve any visible brand details exactly.`;
+  }
+
+  return `Campaign brief: ${instruction}${imageSection}
 
 Generate exactly 8 video concepts now. Return only valid JSON matching the schema.`;
 }
@@ -135,29 +160,29 @@ const ITEM_DEFAULTS = {
 
 function normaliseItem(raw: Partial<BatchItem>, index: number): BatchItem {
   return {
-    title: raw.title ?? `Concept ${index + 1}`,
-    adType: raw.adType ?? "Lifestyle",
-    hook: raw.hook ?? "",
-    promptText: raw.promptText ?? "",
-    caption: raw.caption ?? "",
-    reason: raw.reason ?? "",
-    platform: raw.platform ?? "All",
+    title:           raw.title    ?? `Concept ${index + 1}`,
+    adType:          raw.adType   ?? "Lifestyle",
+    hook:            raw.hook     ?? "",
+    promptText:      raw.promptText ?? "",
+    caption:         raw.caption  ?? "",
+    reason:          raw.reason   ?? "",
+    platform:        "All Platforms",   // always neutral — not exposed in UI
     durationSeconds: ITEM_DEFAULTS.durationSeconds,
-    aspectRatio: ITEM_DEFAULTS.aspectRatio,
-    resolution: ITEM_DEFAULTS.resolution,
-    model: ITEM_DEFAULTS.model,
+    aspectRatio:     ITEM_DEFAULTS.aspectRatio,
+    resolution:      ITEM_DEFAULTS.resolution,
+    model:           ITEM_DEFAULTS.model,
   };
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // 1 — Parse body
   let body: {
     workspaceKey?: string;
     brandName?: string;
     instruction?: string;
     batchType?: string;
+    referenceImages?: ReferenceImage[];
     referenceImageUrl?: string;
     batchSize?: number;
   };
@@ -173,11 +198,11 @@ export async function POST(req: NextRequest) {
     brandName = "Got Jesus?",
     instruction,
     batchType = "General Product Ads",
+    referenceImages = [],
     referenceImageUrl,
     batchSize: rawBatchSize,
   } = body;
 
-  // 2 — Validate required fields
   if (!instruction || instruction.trim().length === 0) {
     return NextResponse.json(
       { error: "instruction is required and must not be empty." },
@@ -185,10 +210,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3 — Clamp batchSize (max 8 for MVP)
   const batchSize = Math.min(Math.max(Number(rawBatchSize) || 8, 1), 8);
 
-  // 4 — Check OpenAI key
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
@@ -197,14 +220,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 5 — Call OpenAI
   const openai = new OpenAI({ apiKey });
 
   const systemPrompt = buildSystemPrompt(brandName, workspaceKey, batchType);
-  const userPrompt = buildUserPrompt(instruction, referenceImageUrl);
+  const userPrompt = buildUserPrompt(instruction, referenceImages, referenceImageUrl);
 
   console.log(
-    `[batch-plan] Requesting ${batchSize} concepts for workspace=${workspaceKey} brand="${brandName}"`
+    `[batch-plan] Requesting ${batchSize} concepts for workspace=${workspaceKey} ` +
+    `brand="${brandName}" refImages=${referenceImages.length}`
   );
 
   let rawContent = "";
@@ -215,10 +238,9 @@ export async function POST(req: NextRequest) {
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
+        { role: "user",   content: userPrompt },
       ],
     });
-
     rawContent = completion.choices[0]?.message?.content ?? "";
     console.log(`[batch-plan] OpenAI responded (${rawContent.length} chars)`);
   } catch (err) {
@@ -230,7 +252,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 6 — Parse and validate JSON
   let parsed: { batchTitle?: string; items?: Partial<BatchItem>[] };
   try {
     parsed = JSON.parse(rawContent) as typeof parsed;
@@ -238,10 +259,7 @@ export async function POST(req: NextRequest) {
     const preview = rawContent.slice(0, 300).replace(/\n/g, " ");
     console.error("[batch-plan] JSON parse failed. Raw preview:", preview);
     return NextResponse.json(
-      {
-        error: "OpenAI returned invalid JSON.",
-        rawPreview: preview,
-      },
+      { error: "OpenAI returned invalid JSON.", rawPreview: preview },
       { status: 500 }
     );
   }
@@ -253,17 +271,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 7 — Normalise items: apply defaults, trim to requested batchSize
   const items: BatchItem[] = parsed.items
     .slice(0, batchSize)
     .map((item, i) => normaliseItem(item, i));
 
-  // Pad to batchSize if OpenAI returned fewer than requested
   while (items.length < batchSize) {
     items.push(normaliseItem({}, items.length));
   }
 
-  // 8 — Build and return final response
   const response: BatchPlanResponse = {
     batchTitle: parsed.batchTitle ?? `${brandName} Batch Campaign`,
     workspaceKey,
