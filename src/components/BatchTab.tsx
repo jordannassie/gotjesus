@@ -12,13 +12,11 @@ interface BatchDraft {
   batchType?: string;
   useChatGPT?: boolean;
   includeVoiceover?: boolean;
+  batchSize?: number;
 }
 
-// Batch types where voiceover defaults to ON (mirrors batch-plan/route.ts)
-const VOICEOVER_DEFAULT_ON = new Set([
-  "UGC Ads", "Ecommerce Product Ads", "Product Launch", "Viral Social Clips",
-  "App / Software Promo", "Local Business Ads", "Faith / Ministry Reels",
-]);
+// Voiceover defaults to ON only for UGC Ads (mirrors batch-plan/route.ts)
+const VOICEOVER_DEFAULT_ON = new Set(["UGC Ads"]);
 
 function draftKey(workspaceKey: string) {
   return `reel_batch_draft:${workspaceKey}`;
@@ -72,6 +70,7 @@ interface BatchPlanResponse {
   workspaceKey: string;
   brandName: string;
   batchType: string;
+  batchSize: number;
   includeVoiceover: boolean;
   items: BatchItem[];
 }
@@ -90,27 +89,15 @@ interface ItemGenState {
 const POLL_INTERVAL_MS = 6000;
 const MAX_POLLS = 120;
 
-const BATCH_TYPES = [
-  "General Product Ads",
-  "UGC Ads",
-  "Product Launch",
-  "Ecommerce Product Ads",
-  "App / Software Promo",
-  "Local Business Ads",
-  "Faith / Ministry Reels",
-  "Viral Social Clips",
-];
+const BATCH_TYPES = ["General Reels", "UGC Ads"] as const;
+type BatchType = typeof BATCH_TYPES[number];
 
-const BATCH_TYPE_DESCRIPTIONS: Record<string, string> = {
-  "General Product Ads":    "Broad mix: lifestyle, product showcase, testimonial, unboxing, hook, cinematic, and one wildcard creative.",
-  "UGC Ads":                "8 creator-style UGC prompts: selfie testimonial, unboxing, problem/solution, demo, reaction, social proof, 3-reasons-why, lifestyle use case.",
-  "Product Launch":         "Launch campaign arc: big reveal, teaser, first look, origin story, benefits, founder angle, launch day energy, limited-time push.",
-  "Ecommerce Product Ads":  "Direct-response formats: scroll hook, product demo, problem/solution, unboxing, benefit stack, social proof, objection crusher, strong CTA.",
-  "App / Software Promo":   "App/SaaS formats: screen demo, problem/workflow, feature highlight, before/after, user reaction, speed demo, use case story, download CTA.",
-  "Local Business Ads":     "Hyper-local formats: customer story, behind the scenes, service demo, trust/proof, location spotlight, offer, community, testimonial.",
-  "Faith / Ministry Reels": "Faith-based formats: question hook, encouragement, testimony, prayer moment, scripture visual, apparel lifestyle, everyday faith, invitation.",
-  "Viral Social Clips":     "Engineered for sharing: pattern interrupt, curiosity hook, unexpected reveal, fast montage, POV, relatable problem, surprise ending, one-liner.",
+const BATCH_TYPE_DESCRIPTIONS: Record<BatchType, string> = {
+  "General Reels": "Randomly picks from 12 visual reel formats: hero shots, lifestyle scenes, cinematic reveals, unboxing, problem/solution, fast montage, and more.",
+  "UGC Ads":       "Randomly picks from 12 creator-style UGC ad plays: hook + reveal, unboxing, problem/solution, demo, review reaction, 3-reasons-why, objection crusher, and more.",
 };
+
+const BATCH_SIZES = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 const DEFAULT_TAG_NAMES = [
   "@product1", "@product2", "@logo", "@model1", "@brandcard", "@endcard",
@@ -296,12 +283,17 @@ function ConceptCard({ item, index, saved, itemId, genState, includeVoiceover, o
         <div className="flex flex-col gap-1">
           <button type="button" onClick={() => setCaptionOpen(v => !v)}
             className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-600 hover:text-neutral-400 transition-colors w-fit">
-            Caption
+            Post Caption
             <svg className={`w-2.5 h-2.5 transition-transform ${captionOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
             </svg>
           </button>
-          {captionOpen && <p className="text-xs text-neutral-500 leading-relaxed whitespace-pre-wrap">{item.caption}</p>}
+          {captionOpen && (
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-neutral-700">For posting only — not used inside the video.</p>
+              <p className="text-xs text-neutral-500 leading-relaxed whitespace-pre-wrap">{item.caption}</p>
+            </div>
+          )}
         </div>
         <div className="flex flex-col gap-1">
           <button type="button" onClick={() => setPromptOpen(v => !v)}
@@ -369,7 +361,8 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
   const [chatGptInstruction, setChatGptInstruction] = useState(
     "Make every type of short-form ad this brand would actually need."
   );
-  const [batchType, setBatchType] = useState(BATCH_TYPES[0]);
+  const [batchType, setBatchType] = useState<string>(BATCH_TYPES[0]);
+  const [batchSize, setBatchSize] = useState(4);
   const [includeVoiceover, setIncludeVoiceover] = useState(false); // loaded from draft or batchType default
 
   // Auto-update voiceover default when batch type changes (unless user already has a draft)
@@ -430,18 +423,20 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
     }
     if (typeof draft.includeVoiceover === "boolean") {
       setIncludeVoiceover(draft.includeVoiceover);
-      voiceoverUserOverride.current = true; // treat draft value as an explicit user setting
+      voiceoverUserOverride.current = true;
     } else {
-      // No saved preference — apply the smart default for whatever batchType was loaded
       const loadedType = draft.batchType ?? BATCH_TYPES[0];
       setIncludeVoiceover(VOICEOVER_DEFAULT_ON.has(loadedType));
+    }
+    if (typeof draft.batchSize === "number" && draft.batchSize >= 1 && draft.batchSize <= 8) {
+      setBatchSize(draft.batchSize);
     }
   }, [workspaceKey]);
 
   // ── Draft persistence: auto-save whenever relevant state changes ──────────
   useEffect(() => {
-    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover });
-  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover]);
+    saveDraft(workspaceKey, { referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize });
+  }, [workspaceKey, referenceImages, seedancePrompt, chatGptInstruction, batchType, useChatGPT, includeVoiceover, batchSize]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -510,7 +505,8 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
           workspaceKey, brandName,
           instruction: chatGptInstruction.trim(), batchType,
           referenceImages: referenceImages.map(({ tag, name, url }) => ({ tag, name, url })),
-          referenceImageUrl: firstImageUrl || undefined, batchSize: 8,
+          referenceImageUrl: firstImageUrl || undefined,
+          batchSize,
           includeVoiceover,
         }),
       });
@@ -869,7 +865,7 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Use ChatGPT to create 8 prompts</span>
                 <p className="text-[10px] text-neutral-700 max-w-sm">
-                  {useChatGPT ? "ChatGPT creates 8 platform-neutral Seedance prompts. No videos generated yet." : "Turn on to generate 8 Seedance-ready prompts from your brief and tagged images."}
+                  {useChatGPT ? `ChatGPT creates ${batchSize} platform-neutral Seedance prompts. No videos generated yet.` : `Turn on to generate ${batchSize} Seedance-ready prompts from your brief and tagged images.`}
                 </p>
               </div>
               <button type="button" role="switch" aria-checked={useChatGPT}
@@ -880,15 +876,29 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
             </div>
             {useChatGPT && (
               <div className="flex flex-col gap-4 mt-1 pt-2 border-t border-neutral-800/60">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Batch Type</label>
-                  <select value={batchType} onChange={e => handleBatchTypeChange(e.target.value)} disabled={isGenerating}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-sm text-neutral-200 outline-none focus:border-neutral-600 cursor-pointer disabled:opacity-50 [color-scheme:dark]">
-                    {BATCH_TYPES.map(t => <option key={t} value={t} className="bg-neutral-900">{t}</option>)}
-                  </select>
-                  {BATCH_TYPE_DESCRIPTIONS[batchType] && (
-                    <p className="text-[10px] text-neutral-600 leading-relaxed">{BATCH_TYPE_DESCRIPTIONS[batchType]}</p>
-                  )}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Batch Type */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Creative Mode</label>
+                    <select value={batchType} onChange={e => handleBatchTypeChange(e.target.value)} disabled={isGenerating}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2.5 text-sm text-neutral-200 outline-none focus:border-neutral-600 cursor-pointer disabled:opacity-50 [color-scheme:dark]">
+                      {BATCH_TYPES.map(t => <option key={t} value={t} className="bg-neutral-900">{t}</option>)}
+                    </select>
+                    {(BATCH_TYPE_DESCRIPTIONS as Record<string, string>)[batchType] && (
+                      <p className="text-[10px] text-neutral-600 leading-relaxed">{(BATCH_TYPE_DESCRIPTIONS as Record<string, string>)[batchType]}</p>
+                    )}
+                  </div>
+                  {/* Batch Size */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">Number of Videos</label>
+                    <select value={batchSize} onChange={e => setBatchSize(Number(e.target.value))} disabled={isGenerating}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3 py-2.5 text-sm text-neutral-200 outline-none focus:border-neutral-600 cursor-pointer disabled:opacity-50 [color-scheme:dark]">
+                      {BATCH_SIZES.map(n => <option key={n} value={n} className="bg-neutral-900">{n} {n === 1 ? "video" : "videos"}</option>)}
+                    </select>
+                    <p className="text-[10px] text-neutral-600 leading-relaxed">
+                      {batchSize <= 3 ? "Quick test batch." : batchSize <= 6 ? "Solid campaign batch." : "Full 8-video campaign."}
+                    </p>
+                  </div>
                 </div>
 
                 {/* Voiceover toggle */}
@@ -931,12 +941,12 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
           <div className="flex items-center justify-between pt-1 flex-wrap gap-3">
             {useChatGPT ? (
               <>
-                <p className="text-[11px] text-neutral-600 max-w-xs">ChatGPT creates 8 platform-neutral Seedance prompts. No videos generated yet.</p>
+                <p className="text-[11px] text-neutral-600 max-w-xs">ChatGPT creates {batchSize} platform-neutral Seedance prompts. No videos generated yet.</p>
                 <button type="button" onClick={handleCreatePrompts} disabled={!canCreatePrompts}
                   className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${canCreatePrompts ? "bg-white text-black hover:bg-neutral-200" : "bg-neutral-800 text-neutral-600 cursor-not-allowed opacity-60"}`}>
                   {isGenerating
-                    ? <><span className="w-4 h-4 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />Creating Prompts…</>
-                    : <><svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" /></svg>Create 8 Prompts</>
+                    ? <><span className="w-4 h-4 rounded-full animate-spin" style={{ border: "2px solid transparent", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />Creating {batchSize} {batchSize === 1 ? "Prompt" : "Prompts"}…</>
+                    : <><svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" /></svg>Create {batchSize} {batchSize === 1 ? "Prompt" : "Prompts"}</>
                   }
                 </button>
               </>
@@ -968,7 +978,9 @@ export default function BatchTab({ workspaceKey = "gotjesus", onSwitchToLibrary 
           {/* Results header */}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-600">{visibleCount} / {batchPlan.items.length} Prompts</span>
+              <span className="text-[10px] font-semibold tracking-widest uppercase text-neutral-600">
+                {visibleCount} / {batchPlan.items.length} {batchPlan.items.length === 1 ? "Prompt" : "Prompts"} Ready
+              </span>
               <h3 className="text-sm font-bold text-white">{batchPlan.batchTitle}</h3>
               <span className="text-[10px] text-neutral-600">{batchPlan.batchType} · {brandName}</span>
             </div>
