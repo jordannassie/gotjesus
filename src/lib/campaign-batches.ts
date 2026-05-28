@@ -262,3 +262,67 @@ export async function getCampaignItems(batchId: string): Promise<CampaignItem[]>
   }
   return (data ?? []) as CampaignItem[];
 }
+
+/**
+ * Returns a single campaign item by id, or null if not found.
+ */
+export async function getCampaignItemById(id: string): Promise<CampaignItem | null> {
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from("campaign_items")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") return null; // not found
+    console.warn(`[campaign-batches] getCampaignItemById(${id}):`, error.message);
+    return null;
+  }
+  return data as CampaignItem;
+}
+
+/**
+ * Returns a single campaign batch by id, or null if not found.
+ */
+export async function getCampaignBatchById(id: string): Promise<CampaignBatch | null> {
+  const supabase = getClient();
+  const { data, error } = await supabase
+    .from("campaign_batches")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") return null; // not found
+    console.warn(`[campaign-batches] getCampaignBatchById(${id}):`, error.message);
+    return null;
+  }
+  return data as CampaignBatch;
+}
+
+/**
+ * Partially updates a campaign_items row.
+ * Uses plain .update() without .select() to avoid RLS SELECT blocks.
+ */
+export async function updateCampaignItem(
+  id: string,
+  patch: Partial<Pick<
+    CampaignItem,
+    | "status"
+    | "kie_task_id"
+    | "video_url"
+    | "thumbnail_url"
+    | "error_message"
+  >>
+): Promise<void> {
+  const supabase = getClient();
+  const { error } = await supabase
+    .from("campaign_items")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`updateCampaignItem(${id}) failed: ${error.message}`);
+  }
+}

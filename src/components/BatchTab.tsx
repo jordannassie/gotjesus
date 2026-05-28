@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { getWorkspaceName } from "@/lib/workspaces";
 
 // ─── Types (mirror /api/batch-plan — defined locally to stay client-safe) ────
@@ -26,6 +26,18 @@ interface BatchPlanResponse {
   batchType: string;
   items: BatchItem[];
 }
+
+// Per-item generation state — tracked client-side while the card polls Kie
+type ItemGenStatus = "idle" | "submitting" | "generating" | "done" | "failed";
+interface ItemGenState {
+  status: ItemGenStatus;
+  kieTaskId?: string;
+  videoUrl?: string;
+  error?: string;
+}
+
+const ITEM_POLL_INTERVAL_MS = 6000;
+const ITEM_MAX_POLLS = 120;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -67,10 +79,16 @@ function ConceptCard({
   item,
   index,
   saved,
+  itemId,
+  genState,
+  onGenerate,
 }: {
   item: BatchItem;
   index: number;
   saved: boolean;
+  itemId?: string;
+  genState?: ItemGenState;
+  onGenerate?: (itemId: string) => void;
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
   const [captionOpen, setCaptionOpen] = useState(false);
@@ -107,19 +125,69 @@ function ConceptCard({
             )}
           </div>
         </div>
-        {saved && (
-          <button
-            type="button"
-            disabled
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-800 text-[11px] font-medium text-neutral-700 cursor-not-allowed flex-shrink-0"
-            title="Video generation coming in next step"
-          >
-            <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-            </svg>
-            Generate Video
-          </button>
-        )}
+        {saved && itemId && (() => {
+          const gs = genState;
+          const gsStatus = gs?.status ?? "idle";
+          const isRunning = gsStatus === "submitting" || gsStatus === "generating";
+
+          if (gsStatus === "done" && gs?.videoUrl) {
+            return (
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 px-2.5 py-1.5 rounded-lg border border-emerald-900 flex-shrink-0">
+                <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Video ready
+              </span>
+            );
+          }
+
+          if (gsStatus === "failed") {
+            return (
+              <button
+                type="button"
+                onClick={() => onGenerate?.(itemId)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-red-900 text-[11px] font-medium text-red-400 hover:text-red-300 hover:border-red-700 transition-colors flex-shrink-0"
+                title={gs?.error ?? "Generation failed — click to retry"}
+              >
+                Retry
+              </button>
+            );
+          }
+
+          return (
+            <button
+              type="button"
+              onClick={() => !isRunning && onGenerate?.(itemId)}
+              disabled={isRunning}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium flex-shrink-0 transition-colors ${
+                isRunning
+                  ? "border-neutral-800 text-neutral-600 cursor-wait"
+                  : "border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500"
+              }`}
+            >
+              {isRunning ? (
+                <>
+                  <span
+                    className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
+                    style={{
+                      border: "2px solid transparent",
+                      borderTopColor: "#a3e635",
+                      borderRightColor: "#22d3ee",
+                    }}
+                  />
+                  {gsStatus === "submitting" ? "Starting…" : "Generating…"}
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                  </svg>
+                  Generate Video
+                </>
+              )}
+            </button>
+          );
+        })()}
       </div>
 
       <div className="px-4 py-4 flex flex-col gap-3">
@@ -182,6 +250,40 @@ function ConceptCard({
             </p>
           )}
         </div>
+
+        {/* Generation status — shown while generating or on error/done */}
+        {genState && genState.status !== "idle" && (
+          <div className="mt-1">
+            {(genState.status === "submitting" || genState.status === "generating") && (
+              <div className="flex items-center gap-2 text-xs text-neutral-500">
+                <span
+                  className="w-2.5 h-2.5 rounded-full animate-spin inline-block flex-shrink-0"
+                  style={{
+                    border: "2px solid transparent",
+                    borderTopColor: "#a3e635",
+                    borderRightColor: "#22d3ee",
+                  }}
+                />
+                {genState.status === "submitting"
+                  ? "Submitting to Kie.ai…"
+                  : `Generating video… (task: ${genState.kieTaskId?.slice(0, 8)}…)`}
+              </div>
+            )}
+            {genState.status === "failed" && genState.error && (
+              <p className="text-[11px] text-red-400 leading-relaxed">{genState.error}</p>
+            )}
+            {genState.status === "done" && genState.videoUrl && (
+              <a
+                href={genState.videoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 underline underline-offset-2 transition-colors"
+              >
+                View video ↗
+              </a>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -207,7 +309,24 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [savedBatchId, setSavedBatchId] = useState<string | null>(null);
+  // After save, holds batchId + ordered array of item ids (index = card index)
+  const [savedBatchData, setSavedBatchData] = useState<{
+    batchId: string;
+    itemIds: string[];
+  } | null>(null);
+
+  // Per-item generation state — keyed by campaign_items.id
+  const [itemGenStates, setItemGenStates] = useState<Record<string, ItemGenState>>({});
+  const itemTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const itemPollCounts = useRef<Record<string, number>>({});
+
+  // Cleanup all item timers on unmount
+  useEffect(() => {
+    const timers = itemTimers.current;
+    return () => {
+      Object.values(timers).forEach(clearTimeout);
+    };
+  }, []);
 
   const canGenerate = instruction.trim().length > 0 && !isGenerating && !isSaving;
 
@@ -246,7 +365,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
   }, [workspaceKey, brandName, instruction, batchType, referenceImageUrl, canGenerate]);
 
   const handleSave = useCallback(async () => {
-    if (!batchPlan || isSaving || savedBatchId) return;
+    if (!batchPlan || isSaving || savedBatchData) return;
     setIsSaving(true);
     setSaveError("");
 
@@ -277,23 +396,176 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
         }),
       });
 
-      const data = (await res.json()) as { batch?: { id: string }; error?: string };
+      const data = (await res.json()) as {
+        batch?: { id: string };
+        items?: { id: string }[];
+        error?: string;
+      };
 
       if (!res.ok) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
 
       if (!data.batch?.id) {
-        throw new Error("Save succeeded but batch id was missing in response.");
+        throw new Error("Save succeeded but batch ID was missing in response.");
       }
 
-      setSavedBatchId(data.batch.id);
+      setSavedBatchData({
+        batchId: data.batch.id,
+        itemIds: (data.items ?? []).map((it: { id: string }) => it.id),
+      });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Save failed.");
     } finally {
       setIsSaving(false);
     }
-  }, [batchPlan, isSaving, savedBatchId, workspaceKey, brandName, instruction, batchType, referenceImageUrl]);
+  }, [batchPlan, isSaving, savedBatchData, workspaceKey, brandName, instruction, batchType, referenceImageUrl]);
+
+  // ─── Per-item video generation ─────────────────────────────────────────────
+
+  const stopItemPoll = useCallback((itemId: string) => {
+    if (itemTimers.current[itemId]) {
+      clearTimeout(itemTimers.current[itemId]);
+      delete itemTimers.current[itemId];
+    }
+  }, []);
+
+  const pollItemGen = useCallback(
+    (itemId: string, taskId: string) => {
+      if ((itemPollCounts.current[itemId] ?? 0) >= ITEM_MAX_POLLS) {
+        stopItemPoll(itemId);
+        setItemGenStates((prev) => ({
+          ...prev,
+          [itemId]: { ...prev[itemId], status: "failed", error: "Generation timed out." },
+        }));
+        return;
+      }
+      itemPollCounts.current[itemId] = (itemPollCounts.current[itemId] ?? 0) + 1;
+
+      fetch(`/api/generate-video?taskId=${encodeURIComponent(taskId)}`)
+        .then((r) =>
+          r.json() as Promise<{
+            state?: string;
+            videoUrl?: string | null;
+            failMsg?: string | null;
+            error?: string;
+          }>
+        )
+        .then((data) => {
+          if (data.error) {
+            stopItemPoll(itemId);
+            setItemGenStates((prev) => ({
+              ...prev,
+              [itemId]: { ...prev[itemId], status: "failed", error: data.error },
+            }));
+            return;
+          }
+          const state = data.state ?? "waiting";
+          if (state === "success" && data.videoUrl) {
+            stopItemPoll(itemId);
+            setItemGenStates((prev) => ({
+              ...prev,
+              [itemId]: { status: "done", kieTaskId: taskId, videoUrl: data.videoUrl! },
+            }));
+            return;
+          }
+          if (state === "fail") {
+            stopItemPoll(itemId);
+            setItemGenStates((prev) => ({
+              ...prev,
+              [itemId]: {
+                ...prev[itemId],
+                status: "failed",
+                error: data.failMsg ?? "Kie generation failed.",
+              },
+            }));
+            return;
+          }
+          // Still in progress — schedule next poll
+          itemTimers.current[itemId] = setTimeout(
+            () => pollItemGen(itemId, taskId),
+            ITEM_POLL_INTERVAL_MS
+          );
+        })
+        .catch((err) => {
+          stopItemPoll(itemId);
+          setItemGenStates((prev) => ({
+            ...prev,
+            [itemId]: {
+              ...prev[itemId],
+              status: "failed",
+              error: err instanceof Error ? err.message : "Poll error.",
+            },
+          }));
+        });
+    },
+    [stopItemPoll]
+  );
+
+  const handleGenerateItem = useCallback(
+    async (itemId: string) => {
+      // Atomically guard against double-start
+      let shouldProceed = false;
+      setItemGenStates((prev) => {
+        const current = prev[itemId]?.status;
+        if (
+          current === "submitting" ||
+          current === "generating" ||
+          current === "done"
+        ) {
+          return prev;
+        }
+        shouldProceed = true;
+        return { ...prev, [itemId]: { status: "submitting" } };
+      });
+      if (!shouldProceed) return;
+
+      stopItemPoll(itemId);
+      itemPollCounts.current[itemId] = 0;
+
+      try {
+        const res = await fetch(
+          `/api/campaign-items/${encodeURIComponent(itemId)}/generate`,
+          { method: "POST" }
+        );
+        const data = (await res.json()) as {
+          kieTaskId?: string;
+          error?: string;
+        };
+
+        if (!res.ok || !data.kieTaskId) {
+          setItemGenStates((prev) => ({
+            ...prev,
+            [itemId]: {
+              status: "failed",
+              error: data.error ?? "Failed to start generation.",
+            },
+          }));
+          return;
+        }
+
+        const kieTaskId = data.kieTaskId;
+        setItemGenStates((prev) => ({
+          ...prev,
+          [itemId]: { status: "generating", kieTaskId },
+        }));
+        // Begin polling after initial delay
+        itemTimers.current[itemId] = setTimeout(
+          () => pollItemGen(itemId, kieTaskId),
+          ITEM_POLL_INTERVAL_MS
+        );
+      } catch (err) {
+        setItemGenStates((prev) => ({
+          ...prev,
+          [itemId]: {
+            status: "failed",
+            error: err instanceof Error ? err.message : "Submit error.",
+          },
+        }));
+      }
+    },
+    [stopItemPoll, pollItemGen]
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -469,7 +741,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {/* Save Batch — only shown when not yet saved */}
-              {!savedBatchId && (
+              {!savedBatchData && (
                 <button
                   type="button"
                   onClick={handleSave}
@@ -503,7 +775,7 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
                 </button>
               )}
               {/* Saved success state */}
-              {savedBatchId && (
+              {savedBatchData && (
                 <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 px-3 py-2 rounded-xl border border-emerald-900 bg-emerald-950/30">
                   <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -514,10 +786,15 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
               <button
                 type="button"
                 onClick={() => {
+                  // Clear all item timers before resetting state
+                  Object.values(itemTimers.current).forEach(clearTimeout);
+                  itemTimers.current = {};
+                  itemPollCounts.current = {};
                   setBatchPlan(null);
                   setError("");
                   setSaveError("");
-                  setSavedBatchId(null);
+                  setSavedBatchData(null);
+                  setItemGenStates({});
                 }}
                 className="text-xs text-neutral-600 hover:text-neutral-300 transition-colors border border-neutral-800 rounded-lg px-3 py-1.5"
               >
@@ -536,13 +813,24 @@ export default function BatchTab({ workspaceKey = "gotjesus" }: Props) {
 
           {/* Concept cards grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {batchPlan.items.map((item, i) => (
-              <ConceptCard key={i} item={item} index={i} saved={!!savedBatchId} />
-            ))}
+            {batchPlan.items.map((item, i) => {
+              const itemId = savedBatchData?.itemIds[i];
+              return (
+                <ConceptCard
+                  key={i}
+                  item={item}
+                  index={i}
+                  saved={!!savedBatchData}
+                  itemId={itemId}
+                  genState={itemId ? itemGenStates[itemId] : undefined}
+                  onGenerate={handleGenerateItem}
+                />
+              );
+            })}
           </div>
 
           {/* Review note — only shown before save */}
-          {!savedBatchId && (
+          {!savedBatchData && (
             <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 px-5 py-4 flex items-start gap-3">
               <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
