@@ -5,7 +5,6 @@ import type { ContentSlot, SlotImage } from "@/lib/content-slots";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type GenStatus = "idle" | "submitting" | "generating" | "saving" | "done" | "error";
-type CreativeStatus = "idle" | "loading" | "done" | "error";
 
 interface Props {
   slot: ContentSlot;
@@ -15,36 +14,65 @@ interface Props {
   isLastSlot?: boolean;
 }
 
-interface CreativeSuggestion {
-  improvedPrompt: string;
-  suggestedPostCaption: string;
-  hook: string;
-  reason: string;
-}
-
 const POLL_INTERVAL_MS = 6000;
 const MAX_POLLS = 120;
 
 const DURATION_OPTIONS = [5, 8, 10, 12, 15];
 const RESOLUTION_OPTIONS = ["480p", "720p", "1080p"];
 
-const TAG_SUGGESTIONS = ["@product1", "@product2", "@product3", "@model1", "@model2", "@model3", "@logo", "@brandcard"];
+const TAG_SUGGESTIONS = [
+  "@product1", "@product2", "@product3",
+  "@model1", "@model2", "@model3",
+  "@logo", "@brandcard",
+];
 
-// Auto-fill a default tag based on position
-function defaultTag(idx: number, existingTags: string[]): string {
-  const product = `@product${idx + 1}`;
-  if (!existingTags.includes(product)) return product;
-  return `@product${existingTags.length + 1}`;
+// Auto-fill a default tag based on position when none is stored
+function defaultTagForIndex(idx: number): string {
+  return `@product${idx + 1}`;
 }
 
-// Merge DB images with local state (preserve local tag/info for unchanged paths)
+// Normalise tag input: ensure it starts with @
+function normaliseTag(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
+}
+
+// Merge DB images with local state, preserving local tag/info edits for unchanged paths
 function mergeImages(dbImages: SlotImage[], local: SlotImage[]): SlotImage[] {
   const localMap = new Map(local.map((img) => [img.path, img]));
   return dbImages.map((img, i) => {
     const existing = localMap.get(img.path);
-    if (existing) return existing; // keep local tag/info edits
-    return { ...img, tag: defaultTag(i, dbImages.map((di, j) => j < i ? local[j]?.tag ?? `@product${j + 1}` : "").filter(Boolean)), info: "" };
+    if (existing) return existing;
+    return { ...img, tag: img.tag ?? defaultTagForIndex(i), info: img.info ?? "" };
   });
+}
+
+/**
+ * Build an enhanced Seedance prompt that prepends a reference image guide.
+ * The user's prompt textarea is not changed — this is built internally on Generate Test.
+ */
+function buildEnhancedPrompt(promptText: string, images: SlotImage[]): string {
+  const tagged = images.filter(
+    (img) => img.tag?.startsWith("@") && (img.info?.trim() || img.name)
+  );
+  if (tagged.length === 0) return promptText;
+
+  const guide = tagged.map((img) => `${img.tag} = ${img.info?.trim() || img.name}`).join("\n");
+
+  return [
+    "Reference images:",
+    guide,
+    "",
+    "User prompt:",
+    promptText,
+    "",
+    "Rules:",
+    "- Preserve product/reference images exactly.",
+    "- Do not invent logos, text, captions, or extra graphics.",
+    "- No captions, no subtitles, no text overlays, no extra words on screen.",
+    "- Do not alter product design.",
+  ].join("\n");
 }
 
 // No client-side aspect ratio validation on reference images.
@@ -72,7 +100,7 @@ export default function ContentSlotCard({
   const [images, setImages] = useState<SlotImage[]>(() =>
     slot.referenceImages.map((img, i) => ({
       ...img,
-      tag: img.tag ?? `@product${i + 1}`,
+      tag: img.tag ?? defaultTagForIndex(i),
       info: img.info ?? "",
     }))
   );
@@ -94,12 +122,6 @@ export default function ContentSlotCard({
   const genTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressStart = useRef(0);
-
-  // GPT Creative state
-  const [creativeStatus, setCreativeStatus] = useState<CreativeStatus>("idle");
-  const [creativeError, setCreativeError] = useState("");
-  const [creativeSuggestion, setCreativeSuggestion] = useState<CreativeSuggestion | null>(null);
-  const [officialEndCardEnabled, setOfficialEndCardEnabled] = useState(false);
 
   // Animate the progress bar while generation is running.
   useEffect(() => {
@@ -190,7 +212,17 @@ export default function ContentSlotCard({
   // ── Image tag/info editing ─────────────────────────────────────────────────
 
   const handleUpdateImageMeta = useCallback((path: string, updates: { tag?: string; info?: string }) => {
-    setImages((prev) => prev.map((img) => img.path === path ? { ...img, ...updates } : img));
+    setImages((prev) =>
+      prev.map((img) =>
+        img.path === path
+          ? {
+              ...img,
+              ...(updates.tag !== undefined ? { tag: normaliseTag(updates.tag) } : {}),
+              ...(updates.info !== undefined ? { info: updates.info } : {}),
+            }
+          : img
+      )
+    );
   }, []);
 
   // ── Image upload ──────────────────────────────────────────────────────────
@@ -237,37 +269,6 @@ export default function ContentSlotCard({
     }
   }, [slot.id, images, onSlotUpdate]);
 
-  // ── GPT Creative ──────────────────────────────────────────────────────────
-
-  const handleRunCreative = useCallback(async () => {
-    setCreativeStatus("loading");
-    setCreativeError("");
-    setCreativeSuggestion(null);
-    try {
-      const res = await fetch("/api/creative-prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspaceKey: slot.workspaceKey,
-          slotName,
-          currentPrompt: promptText,
-          postCaption,
-          referenceImages: images,
-          durationSeconds: duration,
-          aspectRatio: "9:16",
-          officialEndCardEnabled,
-        }),
-      });
-      const data = (await res.json()) as CreativeSuggestion & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setCreativeSuggestion(data);
-      setCreativeStatus("done");
-    } catch (err) {
-      setCreativeError(err instanceof Error ? err.message : "Creative failed.");
-      setCreativeStatus("error");
-    }
-  }, [slot.workspaceKey, slotName, promptText, postCaption, images, duration, officialEndCardEnabled]);
-
   // ── Generate test ─────────────────────────────────────────────────────────
 
   const stopGenPoll = useCallback(() => {
@@ -297,16 +298,21 @@ export default function ContentSlotCard({
     stopGenPoll();
     setGenStatus("submitting"); setGenError(""); setTestVideoUrl(null); setShowTestVideo(false);
     genPollCount.current = 0;
+
+    // Build enhanced prompt with reference image guide (user textarea is not changed)
+    const enhancedPrompt = buildEnhancedPrompt(promptText, images);
+
     try {
       const res = await fetch("/api/generate-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          promptOverride: promptText,
+          promptOverride: enhancedPrompt,
           referenceImageUrls: images.map((img) => img.url),
           slotKey: slot.slotKey,
           resolution,
           duration,
+          // aspectRatio omitted — locked to "9:16" server-side
         }),
       });
       const data = (await res.json()) as { taskId?: string; error?: string };
@@ -364,7 +370,7 @@ export default function ContentSlotCard({
           : undefined,
       }}
     >
-      {/* Large neon percent overlay */}
+      {/* Large neon percent overlay — top-right corner during generation */}
       {genRunning && genProgress > 0 && (
         <div
           className="absolute top-3 right-4 z-10 tabular-nums font-black leading-none pointer-events-none select-none"
@@ -483,12 +489,13 @@ export default function ContentSlotCard({
 
                   {/* Tag + Info inputs */}
                   <div className="flex flex-col gap-1.5 flex-1 min-w-0">
-                    {/* Tag input + suggestion pills */}
+                    {/* Tag input with suggestion pills */}
                     <div className="flex flex-col gap-1">
                       <input
                         type="text"
                         value={img.tag ?? ""}
                         onChange={(e) => handleUpdateImageMeta(img.path, { tag: e.target.value })}
+                        onBlur={(e) => handleUpdateImageMeta(img.path, { tag: normaliseTag(e.target.value) })}
                         placeholder="@product1"
                         className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[11px] text-neutral-300 placeholder-neutral-600 outline-none focus:border-neutral-500 font-mono"
                       />
@@ -528,10 +535,19 @@ export default function ContentSlotCard({
                   </button>
                 </div>
               ))}
+
+              {/* Tag usage helper */}
+              <p className="text-[10px] text-neutral-700 leading-relaxed">
+                Use the <span className="text-neutral-500">Tag</span> in your prompt (e.g.{" "}
+                <span className="font-mono text-neutral-500">@product1</span>) so Seedance knows which image to use.
+                Use <span className="text-neutral-500">Info</span> to describe what each image is.
+                Tag edits save when you click <strong className="text-neutral-600">Save Slot</strong>.
+              </p>
             </div>
           )}
 
-          <div className="flex items-center gap-2 flex-wrap">
+          {/* Upload button */}
+          <div className="flex items-center gap-2">
             <input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageFileChange} />
             <button
               type="button"
@@ -544,122 +560,52 @@ export default function ContentSlotCard({
                 : <><span className="text-base leading-none">+</span> {images.length > 0 ? "Add Image" : "Add Reference Image"}</>
               }
             </button>
-            {images.length > 0 && (
-              <p className="text-[10px] text-neutral-700">
-                Tag edits are saved when you click <strong className="text-neutral-600">Save Slot</strong>.
-              </p>
-            )}
           </div>
           {uploadError && <span className="text-[11px] text-red-400">{uploadError}</span>}
         </div>
 
-        {/* ── Prompt textarea ────────────────────────────────────────────────── */}
-        <div className="relative">
-          <textarea
-            value={promptText}
-            onChange={(e) => setPromptText(e.target.value)}
-            placeholder="Describe your scene in detail. Use @ to reference attached images."
-            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 pr-9 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors leading-relaxed overflow-y-auto"
-            style={{ height: "130px" }}
-          />
-          <button
-            type="button"
-            title="Copy prompt text"
-            onClick={() => {
-              void navigator.clipboard.writeText(promptText).then(() => {
-                setPromptCopied(true);
-                setTimeout(() => setPromptCopied(false), 2000);
-              });
-            }}
-            className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-md border border-neutral-700 text-neutral-600 hover:text-neutral-300 hover:border-neutral-500 bg-neutral-900 transition-colors"
-          >
-            {promptCopied ? (
-              <svg className="w-3 h-3 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-            ) : (
-              <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
-                <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
-              </svg>
-            )}
-          </button>
+        {/* ── Prompt textarea ───────────────────────────────────────────────── */}
+        <div className="flex flex-col gap-1.5">
+          <div className="relative">
+            <textarea
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              placeholder="Describe your scene in detail. Use @product1, @model1, etc. to reference attached images."
+              className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-3.5 py-2.5 pr-9 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none focus:border-neutral-600 focus:ring-1 focus:ring-neutral-700 transition-colors leading-relaxed overflow-y-auto"
+              style={{ height: "130px" }}
+            />
+            <button
+              type="button"
+              title="Copy prompt text"
+              onClick={() => {
+                void navigator.clipboard.writeText(promptText).then(() => {
+                  setPromptCopied(true);
+                  setTimeout(() => setPromptCopied(false), 2000);
+                });
+              }}
+              className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-md border border-neutral-700 text-neutral-600 hover:text-neutral-300 hover:border-neutral-500 bg-neutral-900 transition-colors"
+            >
+              {promptCopied ? (
+                <svg className="w-3 h-3 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                  <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                </svg>
+              )}
+            </button>
+          </div>
+          {/* Tip: tag usage */}
+          <p className="text-[10px] text-neutral-700 leading-relaxed">
+            Tip: Use image tags like{" "}
+            <span className="font-mono text-neutral-600">@product1</span>,{" "}
+            <span className="font-mono text-neutral-600">@model1</span>, or{" "}
+            <span className="font-mono text-neutral-600">@logo</span>{" "}
+            in your prompt so Seedance knows which reference image to use.
+          </p>
         </div>
-
-        {/* ── GPT Creative suggestion panel ──────────────────────────────────── */}
-        {creativeStatus === "done" && creativeSuggestion && (
-          <div className="flex flex-col gap-3 rounded-xl border border-violet-900/50 bg-violet-950/20 px-4 py-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-violet-400">GPT Creative Suggestion</span>
-              <button type="button" onClick={() => { setCreativeStatus("idle"); setCreativeSuggestion(null); }}
-                className="text-[10px] text-neutral-600 hover:text-neutral-400 transition-colors">
-                ✕ Cancel
-              </button>
-            </div>
-
-            {creativeSuggestion.hook && (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Hook</span>
-                <p className="text-[11px] text-neutral-400 leading-relaxed">{creativeSuggestion.hook}</p>
-              </div>
-            )}
-
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Improved Prompt</span>
-              <p className="text-[11px] text-neutral-300 leading-relaxed whitespace-pre-wrap">{creativeSuggestion.improvedPrompt}</p>
-            </div>
-
-            {creativeSuggestion.suggestedPostCaption && (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Suggested Caption</span>
-                <p className="text-[11px] text-neutral-400 leading-relaxed">{creativeSuggestion.suggestedPostCaption}</p>
-              </div>
-            )}
-
-            {creativeSuggestion.reason && (
-              <p className="text-[10px] text-neutral-700 italic leading-relaxed">{creativeSuggestion.reason}</p>
-            )}
-
-            <div className="flex items-center gap-2 flex-wrap pt-0.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setPromptText(creativeSuggestion.improvedPrompt);
-                  setCreativeStatus("idle");
-                  setCreativeSuggestion(null);
-                }}
-                className="px-3 py-1.5 rounded-lg bg-violet-900/60 border border-violet-800 text-xs font-semibold text-violet-300 hover:bg-violet-900 transition-colors"
-              >
-                Use This Prompt
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPromptText(creativeSuggestion.improvedPrompt);
-                  setPostCaption(creativeSuggestion.suggestedPostCaption);
-                  setCreativeStatus("idle");
-                  setCreativeSuggestion(null);
-                }}
-                className="px-3 py-1.5 rounded-lg border border-neutral-700 text-xs text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors"
-              >
-                Use Prompt + Caption
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleRunCreative()}
-                className="px-3 py-1.5 rounded-lg border border-neutral-800 text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
-              >
-                Try Again
-              </button>
-            </div>
-          </div>
-        )}
-
-        {creativeStatus === "error" && creativeError && (
-          <div className="rounded-lg border border-red-900 bg-red-950/30 px-3 py-2">
-            <p className="text-xs text-red-400">{creativeError}</p>
-          </div>
-        )}
 
         {/* ── Post Caption ──────────────────────────────────────────────────── */}
         <div className="flex flex-col gap-1">
@@ -712,17 +658,6 @@ export default function ContentSlotCard({
               ))}
             </select>
           </div>
-
-          {/* Official End Card toggle for Creative */}
-          <button
-            type="button"
-            onClick={() => setOfficialEndCardEnabled((v) => !v)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] transition-colors ${officialEndCardEnabled ? "border-sky-800 bg-sky-950/40 text-sky-400" : "border-neutral-800 bg-neutral-900 text-neutral-600"}`}
-            title="Official end card is appended automatically — tells GPT to write 7s of main content"
-          >
-            <span className="uppercase tracking-widest">End Card</span>
-            <span className="font-semibold">{officialEndCardEnabled ? "ON" : "OFF"}</span>
-          </button>
         </div>
 
         {/* ── Generation progress bar ───────────────────────────────────────── */}
@@ -756,36 +691,18 @@ export default function ContentSlotCard({
 
         {/* ── Action row ────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            {/* Generate Test — unchanged */}
-            <button
-              type="button"
-              onClick={handleGenerateTest}
-              disabled={genRunning}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-700 bg-neutral-900 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {genRunning ? (
-                <><span className="w-3 h-3 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee44", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />{genLabel || "In progress…"}</>
-              ) : (
-                <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>Generate Test</>
-              )}
-            </button>
-
-            {/* Run Creative — GPT prompt improvement */}
-            <button
-              type="button"
-              onClick={() => void handleRunCreative()}
-              disabled={creativeStatus === "loading" || genRunning}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-violet-900 bg-violet-950/30 text-xs text-violet-400 hover:bg-violet-950/60 hover:text-violet-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {creativeStatus === "loading" ? (
-                <><span className="w-3 h-3 rounded-full animate-spin inline-block" style={{ border: "2px solid #7c3aed44", borderTopColor: "#a78bfa" }} />Creating prompt…</>
-              ) : (
-                <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" /></svg>Run Creative</>
-              )}
-            </button>
-          </div>
-
+          <button
+            type="button"
+            onClick={handleGenerateTest}
+            disabled={genRunning}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-700 bg-neutral-900 text-xs text-neutral-300 hover:bg-neutral-800 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {genRunning ? (
+              <><span className="w-3 h-3 rounded-full animate-spin inline-block" style={{ border: "2px solid #22d3ee44", borderTopColor: "#a3e635", borderRightColor: "#22d3ee" }} />{genLabel || "In progress…"}</>
+            ) : (
+              <><svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>Generate Test</>
+            )}
+          </button>
           <button
             type="button"
             onClick={handleSave}
