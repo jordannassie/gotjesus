@@ -98,7 +98,12 @@ STRICT RULES — follow these exactly:
 11. Caption must be social-ready with relevant hashtags and a call to action.
 12. PLATFORM RULE: Do NOT write concepts for a specific platform. Every concept must work for Instagram Reels, TikTok, YouTube Shorts, and Facebook Reels equally. Do not mention platform names in promptText.
 13. VIDEO STYLE VARIETY: Vary the style across the 8 concepts — use: UGC-style, lifestyle scene, product demo, testimonial-style, problem-solution, cinematic brand shot, hook-based social clip, unboxing/reveal.
-14. IMAGE TAG RULE: If reference images are provided with tags like @product1 or @logo, use those exact tags in promptText when referencing the image. Do not invent visual details that contradict the tagged image.
+14. IMAGE TAG RULE — THIS IS MANDATORY: If reference images are provided with tags (e.g. @product1, @logo, @model1), every single promptText MUST explicitly include at least one of those exact tags written literally. You MUST NOT reference uploaded images without using their tag. You MUST NOT use generic substitutes like "the product", "the image", or "the shirt" instead of the tag. Write tags literally exactly as provided, for example:
+    - BAD: "A person holds up a shirt in front of a white background."
+    - GOOD: "Use @product1 as the exact product reference. A person holds up @product1 in front of a white background, close-up reveal, cinematic lighting."
+    - GOOD (multiple tags): "@model1 holds @product1 against a golden hour backdrop, slow pull-back, shallow depth of field."
+    If only one image is provided (e.g. @product1 only), every single promptText must include @product1.
+    If multiple images exist, every promptText must include at minimum the primary product tag (the first one), plus additional tags where relevant.
 
 JSON schema to return:
 {
@@ -124,19 +129,24 @@ function buildUserPrompt(
   let imageSection = "";
 
   if (referenceImages.length > 0) {
+    const tagList = referenceImages.map((img) => img.tag).join(", ");
     const imageList = referenceImages
-      .map((img) => `  - ${img.tag}: ${img.url}${img.name ? ` (${img.name})` : ""}`)
+      .map((img) => `  - ${img.tag}: ${img.name ?? "image"}`)
       .join("\n");
     imageSection = `
 
-Reference images (tagged):
+Uploaded reference images (use these EXACT tags in every promptText):
 ${imageList}
 
-Use these tags exactly when writing Seedance prompts:
-- Reference each image by its tag (e.g. @product1, @logo) when relevant.
-- Treat @product images as the exact product/design reference — preserve all visible details.
-- Do not invent product details, text, or design elements not visible in the image.
-- You may use multiple tags in one prompt if it makes sense (e.g. "@model1 holding @product1").`;
+MANDATORY TAG RULES — you will fail if you break these:
+1. Every single promptText MUST contain at least one of these tags written literally: ${tagList}
+2. Never say "the product", "the shirt", or "the image" — use the tag (e.g. @product1) instead.
+3. The primary image tag is ${referenceImages[0].tag}. If you are unsure which tag to use, use ${referenceImages[0].tag}.
+4. You may use multiple tags in one prompt (e.g. "@model1 wearing @product1 in front of @brandcard").
+5. Do not invent product details, text, or design elements not described in the campaign brief.
+
+Example of a CORRECT promptText: "Use @product1 as the exact product reference. A hand pulls @product1 out of a white box, overhead shot, soft studio lighting, slow motion reveal."
+Example of a WRONG promptText: "A person holds up a shirt. Cinematic. Slow motion." — WRONG because it does not use the image tag.`;
   } else if (legacyImageUrl) {
     imageSection = `
 
@@ -144,7 +154,11 @@ Reference image: ${legacyImageUrl}
 Use the visual content of this image as the anchor for all 8 concepts. Preserve any visible brand details exactly.`;
   }
 
-  return `Campaign brief: ${instruction}${imageSection}
+  const tagReminder = referenceImages.length > 0
+    ? `\n\nFINAL REMINDER: You MUST include at least one image tag (${referenceImages.map(i => i.tag).join(", ")}) in every single promptText field. This is non-negotiable.`
+    : "";
+
+  return `Campaign brief: ${instruction}${imageSection}${tagReminder}
 
 Generate exactly 8 video concepts now. Return only valid JSON matching the schema.`;
 }
@@ -277,6 +291,20 @@ export async function POST(req: NextRequest) {
 
   while (items.length < batchSize) {
     items.push(normaliseItem({}, items.length));
+  }
+
+  // Server-side auto-fix: if GPT missed tags, prepend the primary tag reference.
+  // This guarantees every promptText references at least one uploaded image.
+  if (referenceImages.length > 0) {
+    const allTags = referenceImages.map((img) => img.tag);
+    const primaryTag = allTags[0];
+    for (const item of items) {
+      const hasTag = allTags.some((tag) => item.promptText.includes(tag));
+      if (!hasTag && item.promptText.trim().length > 0) {
+        item.promptText = `Use ${primaryTag} as the exact visual reference. ${item.promptText}`;
+        console.log(`[batch-plan] Auto-fixed promptText for "${item.title}" — added ${primaryTag} tag`);
+      }
+    }
   }
 
   const response: BatchPlanResponse = {
