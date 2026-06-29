@@ -378,3 +378,56 @@ alter table gotjesus_reels add column if not exists hook             text;
 
 alter table campaign_batches add column if not exists post_caption text;
 alter table campaign_batches add column if not exists reference_images jsonb not null default '[]'::jsonb;
+
+-- ─── Migration: add reference_music to content slots ─────────────────────────
+-- Stores one uploaded audio file per content slot as @music1.
+-- During save, FFmpeg replaces the generated video audio with this song.
+-- Run once:
+--
+-- alter table gotjesus_content_slots
+--   add column if not exists reference_music jsonb;
+--
+-- Valid value shape:
+-- { url, path, name, tag: "@music1", info, mimeType, sizeBytes }
+
+alter table gotjesus_content_slots
+  add column if not exists reference_music jsonb;
+
+-- ─── Migration: add music_url to gotjesus_reels ───────────────────────────────
+-- Records the @music1 URL used when saving a reel so it can be audited.
+-- Run once:
+--
+-- alter table gotjesus_reels
+--   add column if not exists music_url text;
+
+alter table gotjesus_reels
+  add column if not exists music_url text;
+
+-- ─── Migration: add Facebook support to posting settings ─────────────────────
+-- Adds facebook_enabled toggle to gotjesus_posting_settings.
+-- Defaults to true so Facebook is opted-in once configured via env vars.
+-- Run once in Supabase SQL Editor:
+--
+-- alter table gotjesus_posting_settings
+--   add column if not exists facebook_enabled boolean not null default true;
+
+alter table gotjesus_posting_settings
+  add column if not exists facebook_enabled boolean not null default true;
+
+-- ─── Migration: add Facebook fields to gotjesus_reels ───────────────────────
+-- Tracks per-reel Facebook posting status and submission ID.
+-- Run once in Supabase SQL Editor:
+--
+-- alter table gotjesus_reels
+--   add column if not exists facebook_enabled boolean not null default false,
+--   add column if not exists facebook_post_submission_id text,
+--   add column if not exists facebook_post_status text,
+--   add column if not exists facebook_post_url text,
+--   add column if not exists facebook_error text;
+
+alter table gotjesus_reels
+  add column if not exists facebook_enabled boolean not null default false,
+  add column if not exists facebook_post_submission_id text,
+  add column if not exists facebook_post_status text,
+  add column if not exists facebook_post_url text,
+  add column if not exists facebook_error text;

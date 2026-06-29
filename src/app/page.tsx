@@ -2,7 +2,7 @@ import BannerImageEditor from "@/components/BannerImageEditor";
 import BrandSwitcher from "@/components/BrandSwitcher";
 import EndCardEditor from "@/components/EndCardEditor";
 import DashboardTabs from "@/components/DashboardTabs";
-import { isBlotatoConnected } from "@/lib/blotato";
+import { isBlotatoConnected, isFacebookConfigured } from "@/lib/blotato";
 import { getBrandSettings } from "@/lib/brand-settings";
 import { getContentSlots, seedDefaultContentSlotsIfMissing } from "@/lib/content-slots";
 import { normalizeWorkspaceKey, getWorkspaceByKey } from "@/lib/workspaces";
@@ -22,6 +22,7 @@ export default async function Home({
   const workspace = getWorkspaceByKey(workspaceKey);
 
   const blotatoConnected = isBlotatoConnected();
+  const facebookConfigured = isFacebookConfigured();
   const brandSettings = await getBrandSettings("gotjesus");
   const heroImage = brandSettings.bannerImageUrl;
   const activeEndCardUrl =
@@ -158,6 +159,7 @@ export default async function Home({
           <DashboardTabs
             contentSlots={contentSlots}
             blotatoConnected={blotatoConnected}
+            facebookConfigured={facebookConfigured}
             workspaceKey={workspaceKey}
           />
         </div>

@@ -30,6 +30,14 @@
 
 import type { Handler } from "@netlify/functions";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import ffmpegStatic from "ffmpeg-static";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { writeFile, mkdir, rm, readFile, chmod } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const execFileAsync = promisify(execFile);
 
 // ─── Config (inlined) ─────────────────────────────────────────────────────────
 
@@ -232,12 +240,13 @@ function getSupabase(): SupabaseClient {
 async function getPostingSettings(supabase: SupabaseClient) {
   const { data } = await supabase
     .from("gotjesus_posting_settings")
-    .select("instagram_enabled, tiktok_enabled, youtube_enabled")
+    .select("instagram_enabled, facebook_enabled, tiktok_enabled, youtube_enabled")
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   return data as {
     instagram_enabled: boolean;
+    facebook_enabled: boolean;
     tiktok_enabled: boolean;
     youtube_enabled: boolean;
   } | null;
@@ -256,6 +265,13 @@ interface ContentSlotRow {
     tag?: string;   // e.g. "@product1" — used in prompt reference guide
     info?: string;  // human description, e.g. "Back of black T-shirt image"
   }>;
+  reference_music?: {
+    url: string;
+    path: string;
+    name: string;
+    tag?: string;   // "@music1"
+    info?: string;  // e.g. "Got Jesus song"
+  } | null;
   enabled: boolean;
   scheduled_post_time: string;
   resolution: string;
@@ -271,36 +287,59 @@ interface ContentSlotRow {
  */
 function buildEnhancedPrompt(
   promptText: string,
-  referenceImages: ContentSlotRow["reference_images"]
+  referenceImages: ContentSlotRow["reference_images"],
+  referenceMusic?: ContentSlotRow["reference_music"]
 ): string {
   const tagged = referenceImages.filter(
     (img) => img.tag?.startsWith("@") && (img.info?.trim() || img.name)
   );
-  if (tagged.length === 0) return promptText;
+  const hasImages = tagged.length > 0;
+  const hasMusic = Boolean(referenceMusic?.url);
 
-  const guide = tagged
-    .map((img) => `${img.tag} = ${img.info?.trim() || img.name}`)
-    .join("\n");
+  if (!hasImages && !hasMusic) return promptText;
 
-  return [
-    "Reference images:",
-    guide,
-    "",
-    "User prompt:",
-    promptText,
-    "",
-    "Rules:",
+  const parts: string[] = [];
+
+  if (hasImages) {
+    const guide = tagged
+      .map((img) => `${img.tag} = ${img.info?.trim() || img.name}`)
+      .join("\n");
+    parts.push("Reference images:", guide, "");
+  }
+
+  if (hasMusic && referenceMusic) {
+    const musicLabel = referenceMusic.info?.trim() || referenceMusic.name;
+    parts.push(
+      "Reference music:",
+      `${referenceMusic.tag ?? "@music1"} = ${musicLabel}`,
+      ""
+    );
+  }
+
+  parts.push("User prompt:", promptText, "", "Rules:");
+  parts.push(
     "- Preserve product/reference images exactly.",
     "- Do not invent logos, text, captions, or extra graphics.",
     "- No captions, no subtitles, no text overlays, no extra words on screen.",
-    "- Do not alter product design.",
-  ].join("\n");
+    "- Do not alter product design."
+  );
+
+  if (hasMusic && referenceMusic) {
+    parts.push(
+      `- Use ${referenceMusic.tag ?? "@music1"} as the exact soundtrack.`,
+      "- Do not generate voiceover, talking, narration, captions, or subtitles.",
+      "- Do not create extra AI music.",
+      "- Final video audio must be the uploaded @music1 song only."
+    );
+  }
+
+  return parts.join("\n");
 }
 
 async function getEnabledContentSlots(supabase: SupabaseClient): Promise<ContentSlotRow[]> {
   const { data, error } = await supabase
     .from("gotjesus_content_slots")
-    .select("id, slot_key, slot_name, prompt_text, post_caption, reference_images, enabled, scheduled_post_time, resolution, duration_seconds, aspect_ratio, sort_order")
+    .select("id, slot_key, slot_name, prompt_text, post_caption, reference_images, reference_music, enabled, scheduled_post_time, resolution, duration_seconds, aspect_ratio, sort_order")
     .eq("workspace_key", "gotjesus")
     .eq("enabled", true)
     .order("sort_order", { ascending: true });
@@ -384,7 +423,8 @@ async function submitKieJob(
   prompt: string,
   slotImageUrls: string[] = [],
   resolution?: string,
-  durationSeconds?: number
+  durationSeconds?: number,
+  musicUrl?: string | null
 ): Promise<string> {
   // Read the active end card from DB (falls back to env var)
   const endCardUrl = await getEndCardUrl(supabase);
@@ -392,12 +432,14 @@ async function submitKieJob(
   const allRefs = [...slotImageUrls, ...(endCardUrl ? [endCardUrl] : [])];
   const res = resolution ?? process.env.KIE_VIDEO_RESOLUTION ?? "480p";
   const dur = durationSeconds ?? 8;
+  // When @music1 is provided, disable Kie audio generation — FFmpeg replaces it after save
+  const generateAudio = !musicUrl;
 
   console.log(`[kie] locked aspect_ratio payload = "${LOCKED_ASPECT_RATIO}"`);
   console.log(
     `[kie] full compact input summary = model=bytedance/seedance-2-fast ` +
     `duration=${dur} resolution=${res} aspect_ratio=${LOCKED_ASPECT_RATIO} ` +
-    `reference_image_count=${allRefs.length}`
+    `reference_image_count=${allRefs.length} generate_audio=${generateAudio} has_music=${Boolean(musicUrl)}`
   );
 
   const fetchRes = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
@@ -413,7 +455,7 @@ async function submitKieJob(
         aspect_ratio: LOCKED_ASPECT_RATIO, // must be "9:16" string — Kie rejects numeric floats
         resolution: res,
         duration: dur,
-        generate_audio: true,
+        generate_audio: generateAudio,
         ...(allRefs.length > 0 ? { reference_image_urls: allRefs } : {}),
       },
     }),
@@ -468,19 +510,107 @@ async function pollKieVideo(
   throw new Error("Kie generation timed out after max poll attempts");
 }
 
+// ─── FFmpeg helpers (inlined) ─────────────────────────────────────────────────
+
+async function runFfmpeg(args: string[]): Promise<void> {
+  if (!ffmpegStatic) throw new Error("ffmpeg-static binary not found.");
+  console.log(`[scheduler] FFmpeg: ${args.join(" ")}`);
+  const { stderr } = await execFileAsync(ffmpegStatic, args, {
+    maxBuffer: 200 * 1024 * 1024,
+  });
+  if (stderr) {
+    console.log("[ffmpeg]", stderr.slice(-1000));
+  }
+}
+
+async function mixMusicIntoVideo(
+  kieVideoUrl: string,
+  musicUrl: string,
+  reelId: string
+): Promise<Buffer> {
+  const tmpDir = join(tmpdir(), `sched-music-${reelId}`);
+  const rawPath = join(tmpDir, "raw.mp4");
+  const musicPath = join(tmpDir, "music.mp3");
+  const outputPath = join(tmpDir, "output.mp4");
+
+  try {
+    await mkdir(tmpDir, { recursive: true });
+
+    if (ffmpegStatic) {
+      await chmod(ffmpegStatic, 0o755).catch(() => {});
+    }
+
+    const videoRes = await fetch(kieVideoUrl);
+    if (!videoRes.ok) throw new Error(`Video download failed: HTTP ${videoRes.status}`);
+    await writeFile(rawPath, Buffer.from(await videoRes.arrayBuffer()));
+
+    const musicRes = await fetch(musicUrl);
+    if (!musicRes.ok) throw new Error(`Music download failed: HTTP ${musicRes.status}`);
+    await writeFile(musicPath, Buffer.from(await musicRes.arrayBuffer()));
+
+    let failed = false;
+    try {
+      await runFfmpeg([
+        "-i", rawPath,
+        "-stream_loop", "-1",
+        "-i", musicPath,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-shortest",
+        "-movflags", "+faststart",
+        "-y",
+        outputPath,
+      ]);
+    } catch {
+      failed = true;
+    }
+
+    if (failed) {
+      await runFfmpeg([
+        "-i", rawPath,
+        "-stream_loop", "-1",
+        "-i", musicPath,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-pix_fmt", "yuv420p",
+        "-shortest",
+        "-movflags", "+faststart",
+        "-y",
+        outputPath,
+      ]);
+    }
+
+    return await readFile(outputPath);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 // ─── Storage helpers (inlined) ────────────────────────────────────────────────
 
 async function downloadAndUpload(
   kieVideoUrl: string,
-  reelId: string
+  reelId: string,
+  musicUrl?: string | null
 ): Promise<string> {
-  const res = await fetch(kieVideoUrl);
-  if (!res.ok)
-    throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  console.log(
-    `[scheduler] Downloaded ${(buffer.length / 1024 / 1024).toFixed(1)} MB for reel ${reelId}`
-  );
+  let buffer: Buffer;
+
+  if (musicUrl) {
+    console.log(`[scheduler] @music1 detected — replacing audio for reel ${reelId}`);
+    buffer = await mixMusicIntoVideo(kieVideoUrl, musicUrl, reelId);
+  } else {
+    const res = await fetch(kieVideoUrl);
+    if (!res.ok)
+      throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
+    buffer = Buffer.from(await res.arrayBuffer());
+    console.log(
+      `[scheduler] Downloaded ${(buffer.length / 1024 / 1024).toFixed(1)} MB for reel ${reelId}`
+    );
+  }
 
   const supabase = getSupabase();
   const filePath = `${FOLDER}/${reelId}.mp4`;
@@ -507,16 +637,30 @@ function blotatoApiHeaders(): HeadersInit {
   };
 }
 
-type Platform = "instagram" | "tiktok" | "youtube";
+type Platform = "instagram" | "facebook" | "tiktok" | "youtube";
 
 function getAccountId(platform: Platform): string | undefined {
   if (platform === "instagram") return process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID;
+  if (platform === "facebook") return process.env.BLOTATO_FACEBOOK_ACCOUNT_ID;
   if (platform === "tiktok") return process.env.BLOTATO_TIKTOK_ACCOUNT_ID;
   if (platform === "youtube") return process.env.BLOTATO_YOUTUBE_ACCOUNT_ID;
 }
 
 function buildBlotatoTarget(platform: Platform): Record<string, unknown> {
   if (platform === "instagram") return { targetType: "instagram", mediaType: "reel" };
+  if (platform === "facebook") {
+    const pageId = process.env.BLOTATO_FACEBOOK_PAGE_ID;
+    if (!pageId) {
+      throw new Error(
+        "Missing BLOTATO_FACEBOOK_PAGE_ID. Facebook posting requires a Page ID from Blotato subaccounts."
+      );
+    }
+    return {
+      targetType: "facebook",
+      pageId,
+      mediaType: "reel",
+    };
+  }
   if (platform === "tiktok") {
     return {
       targetType: "tiktok",
@@ -587,10 +731,22 @@ const handler: Handler = async () => {
   const enabledPlatforms: Platform[] = [];
   if ((settings?.instagram_enabled ?? true) && process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID)
     enabledPlatforms.push("instagram");
+  if (
+    (settings?.facebook_enabled ?? true) &&
+    process.env.BLOTATO_FACEBOOK_ACCOUNT_ID &&
+    process.env.BLOTATO_FACEBOOK_PAGE_ID
+  )
+    enabledPlatforms.push("facebook");
   if ((settings?.tiktok_enabled ?? true) && process.env.BLOTATO_TIKTOK_ACCOUNT_ID)
     enabledPlatforms.push("tiktok");
   if ((settings?.youtube_enabled ?? true) && process.env.BLOTATO_YOUTUBE_ACCOUNT_ID)
     enabledPlatforms.push("youtube");
+
+  console.log(
+    `[scheduler] Facebook enabled=${settings?.facebook_enabled ?? true} ` +
+    `accountId=${Boolean(process.env.BLOTATO_FACEBOOK_ACCOUNT_ID)} ` +
+    `pageId=${Boolean(process.env.BLOTATO_FACEBOOK_PAGE_ID)}`
+  );
 
   if (enabledPlatforms.length === 0) {
     console.log("[scheduler] No platforms configured. Exiting.");
@@ -616,6 +772,8 @@ const handler: Handler = async () => {
       promptText: s.prompt_text || CROSS_DISCOVERY_PROMPT,
       referenceImages: s.reference_images ?? [],      // full objects with tag/info
       imageUrls: (s.reference_images ?? []).map((img) => img.url), // for Kie reference_image_urls
+      referenceMusic: s.reference_music ?? null,
+      musicUrl: s.reference_music?.url ?? null,
       caption: s.post_caption || GOT_JESUS_CAPTION,
       resolution: s.resolution || "480p",
       durationSeconds: s.duration_seconds || 8,
@@ -638,7 +796,7 @@ const handler: Handler = async () => {
   // Sequential processing would risk hitting Netlify's 15-min background function
   // timeout when 3+ slots each take 5-10 min to generate, download, and upload.
   const processSlot = async (slotInfo: typeof slotsToProcess[number]) => {
-    const { timeHHMM, promptText, referenceImages, caption, imageUrls, resolution, durationSeconds, slotKey } = slotInfo;
+    const { timeHHMM, promptText, referenceImages, referenceMusic, caption, imageUrls, musicUrl, resolution, durationSeconds, slotKey } = slotInfo;
     const scheduledForISO = pacificTimeToUTCISO(timeHHMM);
     console.log(`[scheduler] Slot ${slotKey} ${timeHHMM} Pacific → ${scheduledForISO} UTC`);
 
@@ -657,14 +815,12 @@ const handler: Handler = async () => {
     try {
       // Generate Kie reel using slot's prompt + images
       console.log(`[prompt] version=${PROMPT_VERSION} source=scheduled slot=${slotKey}`);
-      console.log(`[scheduler] Submitting Kie job for reel ${reelId}`);
+      console.log(`[scheduler] Submitting Kie job for reel ${reelId}${musicUrl ? " (with @music1)" : ""}`);
 
-      // Build the same enhanced prompt as manual Generate Test:
-      //   "Reference images:\n@product1 = ...\n\nUser prompt:\n...\nRules: no text overlays…"
-      // Falls back to raw promptText when no tagged images are present.
-      const enhancedPrompt = buildEnhancedPrompt(promptText, referenceImages);
+      // Build the same enhanced prompt as manual Generate Test — includes music guide if present.
+      const enhancedPrompt = buildEnhancedPrompt(promptText, referenceImages, referenceMusic ?? undefined);
       const fullPrompt = enhancedPrompt + NATIVE_ENDING_SUFFIX;
-      const taskId = await submitKieJob(supabase, fullPrompt, imageUrls, resolution, durationSeconds);
+      const taskId = await submitKieJob(supabase, fullPrompt, imageUrls, resolution, durationSeconds, musicUrl);
       await updateReelRow(supabase, reelId, {
         kie_task_id: taskId,
         prompt_used: `[${slotKey}] ${promptText.slice(0, 200)}`,
@@ -675,9 +831,13 @@ const handler: Handler = async () => {
       await updateReelRow(supabase, reelId, { kie_video_url: kieVideoUrl, status: "saving" });
       console.log(`[scheduler] Kie video ready for reel ${reelId}`);
 
-      // Download + save to Supabase
-      const savedVideoUrl = await downloadAndUpload(kieVideoUrl, reelId);
-      await updateReelRow(supabase, reelId, { saved_video_url: savedVideoUrl, status: "posting" });
+      // Download + save to Supabase (FFmpeg replaces audio if @music1 present)
+      const savedVideoUrl = await downloadAndUpload(kieVideoUrl, reelId, musicUrl);
+      await updateReelRow(supabase, reelId, {
+        saved_video_url: savedVideoUrl,
+        status: "posting",
+        ...(musicUrl ? { music_url: musicUrl } : {}),
+      });
 
       // Post immediately to all enabled platforms
       const submissionIds: Record<string, string> = {};
@@ -696,6 +856,7 @@ const handler: Handler = async () => {
         blotato_status: "submitted",
         posting_source: "auto",
         instagram_post_submission_id: submissionIds.instagram ?? null,
+        facebook_post_submission_id: submissionIds.facebook ?? null,
         tiktok_post_submission_id: submissionIds.tiktok ?? null,
         youtube_post_submission_id: submissionIds.youtube ?? null,
       });

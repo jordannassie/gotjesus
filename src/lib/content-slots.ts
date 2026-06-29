@@ -22,6 +22,16 @@ export interface SlotImage {
   info?: string;  // human description of what the image is, sent to GPT
 }
 
+export interface SlotMusic {
+  url: string;
+  path: string;
+  name: string;
+  tag?: string;      // always "@music1"
+  info?: string;     // e.g. "Got Jesus song"
+  mimeType?: string;
+  sizeBytes?: number;
+}
+
 export interface ContentSlot {
   id: string;
   workspaceKey: string;
@@ -30,6 +40,7 @@ export interface ContentSlot {
   promptText: string;
   postCaption: string;
   referenceImages: SlotImage[];
+  referenceMusic?: SlotMusic | null;
   enabled: boolean;
   scheduledPostTime: string;
   model: string;
@@ -51,6 +62,7 @@ interface DbRow {
   prompt_text: string;
   post_caption: string;
   reference_images: SlotImage[];
+  reference_music?: SlotMusic | null;
   enabled: boolean;
   scheduled_post_time: string;
   model: string;
@@ -102,6 +114,7 @@ function rowToSlot(row: DbRow): ContentSlot {
     promptText: row.prompt_text,
     postCaption: row.post_caption ?? "",
     referenceImages: Array.isArray(row.reference_images) ? row.reference_images : [],
+    referenceMusic: row.reference_music ?? null,
     enabled: row.enabled,
     scheduledPostTime: row.scheduled_post_time,
     model: row.model,
@@ -244,6 +257,7 @@ export async function upsertContentSlot(
   if (slot.resolution !== undefined) updates.resolution = slot.resolution;
   // Allow saving tag/info edits alongside other slot changes
   if (slot.referenceImages !== undefined) updates.reference_images = slot.referenceImages as SlotImage[];
+  if (slot.referenceMusic !== undefined) updates.reference_music = slot.referenceMusic ?? null;
 
   const { data, error } = await supabase
     .from("gotjesus_content_slots")
@@ -292,6 +306,7 @@ export async function createContentSlot(
     prompt_text: overrides.promptText ?? "",
     post_caption: overrides.postCaption ?? "",
     reference_images: overrides.referenceImages ?? [],
+    reference_music: overrides.referenceMusic ?? null,
     enabled: overrides.enabled ?? false,
     scheduled_post_time: overrides.scheduledPostTime ?? "08:00",
     model: overrides.model ?? "Seedance 2.0 Fast",
@@ -360,6 +375,36 @@ export async function updateContentSlotImages(
   if (error || !data) {
     throw new Error(
       `Failed to update slot images: ${error?.message ?? "no data returned"}`
+    );
+  }
+
+  return rowToSlot(data as DbRow);
+}
+
+/**
+ * Sets or clears the reference_music for a slot.
+ * Pass null to remove the music.
+ * Throws on failure.
+ */
+export async function updateContentSlotMusic(
+  slotId: string,
+  music: SlotMusic | null
+): Promise<ContentSlot> {
+  const supabase = requireClient();
+
+  const { data, error } = await supabase
+    .from("gotjesus_content_slots")
+    .update({
+      reference_music: music,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", slotId)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Failed to update slot music: ${error?.message ?? "no data returned"}`
     );
   }
 

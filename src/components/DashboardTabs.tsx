@@ -14,6 +14,7 @@ type Tab = "engine" | "library" | "connections";
 interface Props {
   contentSlots: ContentSlot[];
   blotatoConnected: boolean;
+  facebookConfigured?: boolean;
   workspaceKey: string;
 }
 
@@ -78,7 +79,7 @@ function PageSpinner() {
   );
 }
 
-export default function DashboardTabs({ contentSlots, blotatoConnected, workspaceKey }: Props) {
+export default function DashboardTabs({ contentSlots, blotatoConnected, facebookConfigured = false, workspaceKey }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("engine");
   const [isPending, startTransition] = useTransition();
 
@@ -122,7 +123,7 @@ export default function DashboardTabs({ contentSlots, blotatoConnected, workspac
         ) : activeTab === "library" ? (
           <LibraryTab workspaceKey={workspaceKey} />
         ) : (
-          <ConnectionsTab blotatoConnected={blotatoConnected} workspaceKey={workspaceKey} />
+          <ConnectionsTab blotatoConnected={blotatoConnected} facebookConfigured={facebookConfigured} workspaceKey={workspaceKey} />
         )}
       </div>
     </div>

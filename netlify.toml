@@ -9,17 +9,20 @@
 # is detected. That plugin converts App Router API routes into Netlify Functions.
 
 # ── Background Function: save-reel-background ─────────────────────────────────
-# Invoked by POST /api/save-reel. Downloads the Kie video, uploads to Supabase
-# Storage, and optionally posts via Blotato. Runs for up to 15 minutes.
+# Invoked by POST /api/save-reel. Downloads the Kie video, uses FFmpeg to replace
+# audio with @music1 when present, uploads to Supabase Storage, and optionally
+# posts via Blotato. Runs for up to 15 minutes.
 [functions."save-reel-background"]
-  # No external_node_modules needed — @supabase/supabase-js is bundled normally.
+  external_node_modules = ["ffmpeg-static"]
 
 # ── Scheduled Background Function: daily-scheduler-background ─────────────────
 # Runs every 30 minutes. Checks which content slots are due in the current
-# 30-minute window, generates the video, then posts it immediately via Blotato.
+# 30-minute window, generates the video, replaces audio with @music1 when present,
+# then posts it immediately via Blotato.
 # Runs for up to 15 minutes as a background function.
 [functions."daily-scheduler-background"]
   schedule = "*/30 * * * *"
+  external_node_modules = ["ffmpeg-static"]
 
 # ── Background Function: process-reel-background (PRESERVED — INACTIVE) ───────
 # Old FFmpeg end card pipeline. Not used in the active flow.

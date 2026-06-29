@@ -19,6 +19,15 @@
 
 import type { Handler, HandlerEvent } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
+import ffmpegStatic from "ffmpeg-static";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { writeFile, readFile, mkdir, rm, chmod } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+
+const execFileAsync = promisify(execFile);
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -51,20 +60,126 @@ async function updateReel(
   }
 }
 
+// ─── FFmpeg helper ────────────────────────────────────────────────────────────
+
+async function runFfmpeg(args: string[]): Promise<void> {
+  if (!ffmpegStatic) throw new Error("ffmpeg-static binary not found.");
+  console.log(`[save-reel-bg] FFmpeg: ${args.join(" ")}`);
+  const { stderr } = await execFileAsync(ffmpegStatic, args, {
+    maxBuffer: 200 * 1024 * 1024,
+  });
+  if (stderr) {
+    console.log("[ffmpeg]", stderr.slice(-1000));
+  }
+}
+
+/**
+ * Downloads the Kie video and uploads music to tmp files, then uses FFmpeg to
+ * replace the entire video audio track with the uploaded music, looping it if
+ * shorter than the video and trimming to the exact video duration.
+ * Returns the final buffer ready for upload to Supabase.
+ */
+async function mixMusicIntoVideo(
+  kieVideoUrl: string,
+  musicUrl: string,
+  reelId: string
+): Promise<Buffer> {
+  const tmpDir = join(tmpdir(), `reel-music-${reelId}-${randomUUID()}`);
+  const rawPath = join(tmpDir, "raw.mp4");
+  const musicPath = join(tmpDir, "music.mp3");
+  const outputPath = join(tmpDir, "output.mp4");
+
+  try {
+    await mkdir(tmpDir, { recursive: true });
+
+    if (ffmpegStatic) {
+      await chmod(ffmpegStatic, 0o755).catch(() => {});
+    }
+
+    // Download video
+    console.log(`[save-reel-bg] Downloading Kie video for music mix: ${kieVideoUrl}`);
+    const videoRes = await fetch(kieVideoUrl);
+    if (!videoRes.ok) throw new Error(`Video download failed: HTTP ${videoRes.status}`);
+    await writeFile(rawPath, Buffer.from(await videoRes.arrayBuffer()));
+
+    // Download music
+    console.log(`[save-reel-bg] Downloading music: ${musicUrl}`);
+    const musicRes = await fetch(musicUrl);
+    if (!musicRes.ok) throw new Error(`Music download failed: HTTP ${musicRes.status}`);
+    await writeFile(musicPath, Buffer.from(await musicRes.arrayBuffer()));
+
+    // Try stream-copy first (fast path — no video re-encode)
+    console.log(`[save-reel-bg] Mixing music with stream copy (fast path)`);
+    let ffmpegFailed = false;
+    try {
+      await runFfmpeg([
+        "-i", rawPath,
+        "-stream_loop", "-1",
+        "-i", musicPath,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-shortest",
+        "-movflags", "+faststart",
+        "-y",
+        outputPath,
+      ]);
+    } catch {
+      ffmpegFailed = true;
+    }
+
+    // Fall back to full re-encode if stream copy failed
+    if (ffmpegFailed) {
+      console.log(`[save-reel-bg] Stream copy failed — falling back to libx264 re-encode`);
+      await runFfmpeg([
+        "-i", rawPath,
+        "-stream_loop", "-1",
+        "-i", musicPath,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-pix_fmt", "yuv420p",
+        "-shortest",
+        "-movflags", "+faststart",
+        "-y",
+        outputPath,
+      ]);
+    }
+
+    const finalBuffer = await readFile(outputPath);
+    console.log(
+      `[save-reel-bg] Music mix complete: ${(finalBuffer.length / 1024 / 1024).toFixed(1)} MB`
+    );
+    return finalBuffer;
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 // ─── Storage helpers (inlined) ────────────────────────────────────────────────
 
 async function downloadAndUpload(
   kieVideoUrl: string,
-  reelId: string
+  reelId: string,
+  musicUrl?: string | null
 ): Promise<string> {
-  console.log(`[save-reel-bg] Downloading video for reel ${reelId}: ${kieVideoUrl}`);
-  const res = await fetch(kieVideoUrl);
-  if (!res.ok)
-    throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  console.log(
-    `[save-reel-bg] Downloaded ${(buffer.length / 1024 / 1024).toFixed(1)} MB`
-  );
+  let buffer: Buffer;
+
+  if (musicUrl) {
+    console.log(`[save-reel-bg] @music1 detected — replacing audio track for reel ${reelId}`);
+    buffer = await mixMusicIntoVideo(kieVideoUrl, musicUrl, reelId);
+  } else {
+    console.log(`[save-reel-bg] Downloading video for reel ${reelId}: ${kieVideoUrl}`);
+    const res = await fetch(kieVideoUrl);
+    if (!res.ok)
+      throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
+    buffer = Buffer.from(await res.arrayBuffer());
+    console.log(
+      `[save-reel-bg] Downloaded ${(buffer.length / 1024 / 1024).toFixed(1)} MB`
+    );
+  }
 
   const supabase = getSupabase();
   const filePath = `${FOLDER}/${reelId}.mp4`;
@@ -96,10 +211,11 @@ function blotatoApiHeaders(): HeadersInit {
   };
 }
 
-type BlotatoPlatform = "instagram" | "tiktok" | "youtube";
+type BlotatoPlatform = "instagram" | "facebook" | "tiktok" | "youtube";
 
 function getAccountId(platform: BlotatoPlatform): string | undefined {
   if (platform === "instagram") return process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID;
+  if (platform === "facebook") return process.env.BLOTATO_FACEBOOK_ACCOUNT_ID;
   if (platform === "tiktok") return process.env.BLOTATO_TIKTOK_ACCOUNT_ID;
   if (platform === "youtube") return process.env.BLOTATO_YOUTUBE_ACCOUNT_ID;
 }
@@ -107,6 +223,19 @@ function getAccountId(platform: BlotatoPlatform): string | undefined {
 function buildBlotatoTarget(platform: BlotatoPlatform): Record<string, unknown> {
   if (platform === "instagram") {
     return { targetType: "instagram", mediaType: "reel" };
+  }
+  if (platform === "facebook") {
+    const pageId = process.env.BLOTATO_FACEBOOK_PAGE_ID;
+    if (!pageId) {
+      throw new Error(
+        "Missing BLOTATO_FACEBOOK_PAGE_ID. Facebook posting requires a Page ID from Blotato subaccounts."
+      );
+    }
+    return {
+      targetType: "facebook",
+      pageId,
+      mediaType: "reel",
+    };
   }
   if (platform === "tiktok") {
     return {
@@ -180,6 +309,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     autoPost?: boolean;
     platforms?: string[];
     scheduledTime?: string;
+    musicUrl?: string | null;
   } = {};
 
   try {
@@ -188,7 +318,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     return { statusCode: 400, body: "Invalid JSON body" };
   }
 
-  const { reelId, kieVideoUrl, autoPost = false, platforms = [], scheduledTime } = body;
+  const { reelId, kieVideoUrl, autoPost = false, platforms = [], scheduledTime, musicUrl } = body;
 
   if (!reelId || !kieVideoUrl) {
     return { statusCode: 400, body: "Missing reelId or kieVideoUrl" };
@@ -197,9 +327,13 @@ const handler: Handler = async (event: HandlerEvent) => {
   console.log(`[save-reel-bg] Starting reel ${reelId} (autoPost=${autoPost})`);
 
   try {
-    // ── Step 1: Download + upload to Supabase ─────────────────────────────────
-    const savedVideoUrl = await downloadAndUpload(kieVideoUrl, reelId);
-    await updateReel(reelId, { saved_video_url: savedVideoUrl, status: "ready" });
+    // ── Step 1: Download + upload to Supabase (with optional @music1 replacement) ─
+    const savedVideoUrl = await downloadAndUpload(kieVideoUrl, reelId, musicUrl);
+    await updateReel(reelId, {
+      saved_video_url: savedVideoUrl,
+      status: "ready",
+      ...(musicUrl ? { music_url: musicUrl } : {}),
+    });
 
     // ── Step 2: Blotato posting (if autoPost / manual_post_enabled) ──────────
     if (!autoPost) {
@@ -245,12 +379,15 @@ const handler: Handler = async (event: HandlerEvent) => {
         status: isScheduled ? "scheduled" : anySucceeded ? "posted" : "ready",
         blotato_status: anySucceeded ? "submitted" : "failed",
         instagram_post_submission_id: submissionIds.instagram ?? null,
+        facebook_post_submission_id: submissionIds.facebook ?? null,
         tiktok_post_submission_id: submissionIds.tiktok ?? null,
         youtube_post_submission_id: submissionIds.youtube ?? null,
         instagram_post_status: platformStatuses.instagram ?? null,
+        facebook_post_status: platformStatuses.facebook ?? null,
         tiktok_post_status: platformStatuses.tiktok ?? null,
         youtube_post_status: platformStatuses.youtube ?? null,
         instagram_error: platformErrors.instagram ?? null,
+        facebook_error: platformErrors.facebook ?? null,
         tiktok_error: platformErrors.tiktok ?? null,
         youtube_error: platformErrors.youtube ?? null,
       });

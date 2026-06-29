@@ -4,6 +4,7 @@ import { getWorkspaceName } from "@/lib/workspaces";
 
 interface Props {
   blotatoConnected: boolean;
+  facebookConfigured?: boolean;
   workspaceKey?: string;
 }
 
@@ -76,7 +77,7 @@ function NativePlatformCard({ platform, icon }: { platform: string; icon: React.
   );
 }
 
-export default function ConnectionsTab({ blotatoConnected, workspaceKey = "gotjesus" }: Props) {
+export default function ConnectionsTab({ blotatoConnected, facebookConfigured = false, workspaceKey = "gotjesus" }: Props) {
   const brandName = getWorkspaceName(workspaceKey);
 
   return (
@@ -129,7 +130,48 @@ export default function ConnectionsTab({ blotatoConnected, workspaceKey = "gotje
             sublabel="Publishing API v2 — cross-platform distribution"
             status={blotatoConnected ? "connected" : "disconnected"}
           />
+          <StatusRow
+            label="Instagram"
+            sublabel="Via Blotato — BLOTATO_INSTAGRAM_ACCOUNT_ID"
+            status={blotatoConnected ? "connected" : "disconnected"}
+          />
+          <StatusRow
+            label="Facebook"
+            sublabel={
+              facebookConfigured
+                ? "Via Blotato — Account ID 34233, Page ID 1126460550555241"
+                : "Requires BLOTATO_FACEBOOK_ACCOUNT_ID + BLOTATO_FACEBOOK_PAGE_ID"
+            }
+            status={facebookConfigured ? "connected" : "disconnected"}
+          />
+          <StatusRow
+            label="TikTok"
+            sublabel="Via Blotato — BLOTATO_TIKTOK_ACCOUNT_ID"
+            status={blotatoConnected ? "connected" : "disconnected"}
+          />
+          <StatusRow
+            label="YouTube"
+            sublabel="Via Blotato — BLOTATO_YOUTUBE_ACCOUNT_ID"
+            status={blotatoConnected ? "connected" : "disconnected"}
+          />
         </div>
+        {facebookConfigured && (
+          <div className="px-5 py-3 border-t border-neutral-800 bg-neutral-900/30">
+            <p className="text-[11px] text-emerald-600/80 leading-relaxed">
+              Facebook connected: Got Jesus? page via Blotato. Posts as Reels to{" "}
+              <span className="text-emerald-500">facebook.com/gotjesusco</span>
+            </p>
+          </div>
+        )}
+        {!facebookConfigured && blotatoConnected && (
+          <div className="px-5 py-3 border-t border-neutral-800 bg-neutral-900/30">
+            <p className="text-[11px] text-neutral-600 leading-relaxed">
+              Facebook requires a connected Facebook account ID and Page ID from Blotato.
+              Add <code className="text-neutral-400 bg-neutral-800 px-1 py-0.5 rounded text-[10px]">BLOTATO_FACEBOOK_ACCOUNT_ID</code> and{" "}
+              <code className="text-neutral-400 bg-neutral-800 px-1 py-0.5 rounded text-[10px]">BLOTATO_FACEBOOK_PAGE_ID</code> to Netlify env vars.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Native Social Connections */}
@@ -137,7 +179,7 @@ export default function ConnectionsTab({ blotatoConnected, workspaceKey = "gotje
         <div className="px-5 py-4 border-b border-neutral-800">
           <h3 className="text-sm font-semibold text-white">Native Social Connections</h3>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Coming next: connect <span className="text-neutral-300">{brandName}</span> directly to its own Instagram, Facebook, TikTok, and YouTube accounts.
+            Coming next: connect <span className="text-neutral-300">{brandName}</span> directly to its own Instagram, Facebook, TikTok, and YouTube accounts via direct OAuth.
           </p>
         </div>
         <div className="px-5">
@@ -176,7 +218,7 @@ export default function ConnectionsTab({ blotatoConnected, workspaceKey = "gotje
         </div>
         <div className="px-5 py-3 border-t border-neutral-800 bg-neutral-900/30">
           <p className="text-[11px] text-neutral-600 leading-relaxed">
-            Blotato remains active for posting. Native connections will be added one platform at a time.
+            Blotato remains active for posting. Native OAuth connections will be added one platform at a time.
           </p>
         </div>
       </div>

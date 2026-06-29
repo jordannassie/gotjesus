@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getReel, updateReel } from "@/lib/reels-db";
 import { getPostingSettings } from "@/lib/posting-settings";
-import { publishToAll, isBlotatoConnected, type BlotatoPlatform } from "@/lib/blotato";
+import { publishToAll, isBlotatoConnected, isFacebookConfigured, type BlotatoPlatform } from "@/lib/blotato";
 import { GOT_JESUS_DEFAULT_SOCIAL_CAPTION } from "@/lib/social-caption";
 
 export async function POST(req: NextRequest) {
@@ -49,10 +49,19 @@ export async function POST(req: NextRequest) {
   const platforms: BlotatoPlatform[] = [];
   if (settings.instagramEnabled && process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID)
     platforms.push("instagram");
+  if (settings.facebookEnabled && isFacebookConfigured())
+    platforms.push("facebook");
   if (settings.tiktokEnabled && process.env.BLOTATO_TIKTOK_ACCOUNT_ID)
     platforms.push("tiktok");
   if (settings.youtubeEnabled && process.env.BLOTATO_YOUTUBE_ACCOUNT_ID)
     platforms.push("youtube");
+
+  console.log(
+    `[post-reel] Facebook enabled=${settings.facebookEnabled} ` +
+    `accountId=${Boolean(process.env.BLOTATO_FACEBOOK_ACCOUNT_ID)} ` +
+    `pageId=${Boolean(process.env.BLOTATO_FACEBOOK_PAGE_ID)} ` +
+    `configured=${isFacebookConfigured()}`
+  );
 
   if (platforms.length === 0)
     return NextResponse.json(
@@ -91,9 +100,11 @@ export async function POST(req: NextRequest) {
       status: "posted",
       posting_source: "manual",
       instagram_post_submission_id: submissionIds.instagram ?? reel.instagram_post_submission_id,
+      facebook_post_submission_id: submissionIds.facebook ?? reel.facebook_post_submission_id,
       tiktok_post_submission_id: submissionIds.tiktok ?? reel.tiktok_post_submission_id,
       youtube_post_submission_id: submissionIds.youtube ?? reel.youtube_post_submission_id,
       instagram_enabled: platforms.includes("instagram") || reel.instagram_enabled,
+      facebook_enabled: platforms.includes("facebook") || reel.facebook_enabled,
       tiktok_enabled: platforms.includes("tiktok") || reel.tiktok_enabled,
       youtube_enabled: platforms.includes("youtube") || reel.youtube_enabled,
     }).catch((err) => {

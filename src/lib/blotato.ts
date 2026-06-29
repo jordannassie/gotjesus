@@ -11,6 +11,8 @@
  *   BLOTATO_INSTAGRAM_ACCOUNT_ID
  *   BLOTATO_YOUTUBE_ACCOUNT_ID
  *   BLOTATO_TIKTOK_ACCOUNT_ID
+ *   BLOTATO_FACEBOOK_ACCOUNT_ID   (Facebook connected account from Blotato)
+ *   BLOTATO_FACEBOOK_PAGE_ID      (Facebook Page subaccount ID from Blotato)
  */
 
 import { GOT_JESUS_DEFAULT_SOCIAL_CAPTION } from "@/lib/social-caption";
@@ -19,7 +21,7 @@ const BLOTATO_BASE_URL = "https://backend.blotato.com";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type BlotatoPlatform = "instagram" | "youtube" | "tiktok";
+export type BlotatoPlatform = "instagram" | "facebook" | "tiktok" | "youtube";
 
 export type BlotatoPostStatus = "in-progress" | "scheduled" | "published" | "failed";
 
@@ -41,7 +43,19 @@ export function isBlotatoConnected(): boolean {
     process.env.BLOTATO_API_KEY &&
       (process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID ||
         process.env.BLOTATO_YOUTUBE_ACCOUNT_ID ||
-        process.env.BLOTATO_TIKTOK_ACCOUNT_ID)
+        process.env.BLOTATO_TIKTOK_ACCOUNT_ID ||
+        process.env.BLOTATO_FACEBOOK_ACCOUNT_ID)
+  );
+}
+
+/**
+ * Returns true when Facebook is fully configured — both account ID and page ID
+ * must be present because Blotato requires both for Facebook posts.
+ */
+export function isFacebookConfigured(): boolean {
+  return Boolean(
+    process.env.BLOTATO_FACEBOOK_ACCOUNT_ID &&
+    process.env.BLOTATO_FACEBOOK_PAGE_ID
   );
 }
 
@@ -49,10 +63,12 @@ export function getBlotatoAccountIds(): Partial<Record<BlotatoPlatform, string>>
   const ids: Partial<Record<BlotatoPlatform, string>> = {};
   if (process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID)
     ids.instagram = process.env.BLOTATO_INSTAGRAM_ACCOUNT_ID;
-  if (process.env.BLOTATO_YOUTUBE_ACCOUNT_ID)
-    ids.youtube = process.env.BLOTATO_YOUTUBE_ACCOUNT_ID;
+  if (process.env.BLOTATO_FACEBOOK_ACCOUNT_ID)
+    ids.facebook = process.env.BLOTATO_FACEBOOK_ACCOUNT_ID;
   if (process.env.BLOTATO_TIKTOK_ACCOUNT_ID)
     ids.tiktok = process.env.BLOTATO_TIKTOK_ACCOUNT_ID;
+  if (process.env.BLOTATO_YOUTUBE_ACCOUNT_ID)
+    ids.youtube = process.env.BLOTATO_YOUTUBE_ACCOUNT_ID;
   return ids;
 }
 
@@ -77,11 +93,27 @@ function authHeaders(): HeadersInit {
 /**
  * Build the platform-specific `target` object for the Blotato v2 posts API.
  * Each platform has its own required fields.
+ *
+ * Facebook requires BOTH accountId (connected account) AND pageId (Page subaccount).
+ * accountId goes in the post body; pageId goes inside the target object.
  */
 function buildTarget(platform: BlotatoPlatform): Record<string, unknown> {
   if (platform === "instagram") {
     return {
       targetType: "instagram",
+      mediaType: "reel",
+    };
+  }
+  if (platform === "facebook") {
+    const pageId = process.env.BLOTATO_FACEBOOK_PAGE_ID;
+    if (!pageId) {
+      throw new Error(
+        "Missing BLOTATO_FACEBOOK_PAGE_ID. Facebook posting requires a Page ID from Blotato subaccounts."
+      );
+    }
+    return {
+      targetType: "facebook",
+      pageId,
       mediaType: "reel",
     };
   }
@@ -144,7 +176,7 @@ export async function publishPost(
     ...(scheduledTime ? { scheduledTime } : {}),
   };
 
-  console.log(`[blotato] POST /v2/posts platform=${platform} accountId=${accountId}`);
+  console.log(`[blotato] POST /v2/posts platform=${platform} accountId=${accountId}${platform === "facebook" ? ` pageId=${process.env.BLOTATO_FACEBOOK_PAGE_ID ?? "(missing)"}` : ""}`);
 
   const res = await fetch(`${BLOTATO_BASE_URL}/v2/posts`, {
     method: "POST",

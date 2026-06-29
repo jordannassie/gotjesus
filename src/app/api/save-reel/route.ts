@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     contentSlotName?: string;
     postCaption?: string;
     workspaceKey?: string;
+    musicUrl?: string;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
     contentSlotName,
     postCaption,
     workspaceKey = "gotjesus",
+    musicUrl,
   } = body;
 
   if (!kieVideoUrl)
@@ -85,6 +87,7 @@ export async function POST(req: NextRequest) {
       caption_used: postCaption || GOT_JESUS_DEFAULT_SOCIAL_CAPTION,
       prompt_used: CROSS_DISCOVERY_PROMPT,
       instagram_enabled: platforms.includes("instagram"),
+      facebook_enabled: platforms.includes("facebook"),
       tiktok_enabled: platforms.includes("tiktok"),
       youtube_enabled: platforms.includes("youtube"),
       content_slot_key: contentSlotKey ?? null,
@@ -111,7 +114,7 @@ export async function POST(req: NextRequest) {
     const bgRes = await fetch(bgUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reelId, kieVideoUrl, autoPost, platforms }),
+      body: JSON.stringify({ reelId, kieVideoUrl, autoPost, platforms, musicUrl: musicUrl ?? null }),
       // Disable Next.js fetch caching — this must always hit the function live
       cache: "no-store",
     });

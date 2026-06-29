@@ -110,7 +110,8 @@ async function submitKieJobWithImages(
   prompt: string,
   referenceImageUrls: string[],
   resolution: string,
-  duration: number
+  duration: number,
+  musicUrl?: string
 ): Promise<string> {
   // Read active end card from brand settings (DB), fall back to env var
   const endCardUrl = await getActiveEndCardUrl();
@@ -124,12 +125,15 @@ async function submitKieJobWithImages(
   const apiKey = process.env.KIE_API_KEY;
   if (!apiKey) throw new Error("KIE_API_KEY is not set.");
 
+  // When @music1 is provided, disable Kie audio generation — FFmpeg will replace it after save
+  const generateAudio = !musicUrl;
+
   // Confirm exactly what is being sent to Kie
   console.log(`[kie] locked aspect_ratio payload = "${LOCKED_ASPECT_RATIO}"`);
   console.log(
     `[kie] full compact input summary = model=bytedance/seedance-2-fast ` +
     `duration=${duration} resolution=${resolution} aspect_ratio=${LOCKED_ASPECT_RATIO} ` +
-    `reference_image_count=${allRefs.length}`
+    `reference_image_count=${allRefs.length} generate_audio=${generateAudio} has_music=${Boolean(musicUrl)}`
   );
 
   const response = await fetch(`${KIE_BASE_URL}/api/v1/jobs/createTask`, {
@@ -145,7 +149,7 @@ async function submitKieJobWithImages(
         aspect_ratio: LOCKED_ASPECT_RATIO, // must be "9:16" string — Kie rejects numeric floats
         resolution,
         duration,
-        generate_audio: true,
+        generate_audio: generateAudio,
         ...(allRefs.length > 0 ? { reference_image_urls: allRefs } : {}),
       },
     }),
@@ -178,6 +182,7 @@ export async function POST(req: NextRequest) {
       slotKey?: string;
       resolution?: string;
       duration?: number;
+      musicUrl?: string;
     } = {};
 
     try {
@@ -192,6 +197,7 @@ export async function POST(req: NextRequest) {
       slotKey,
       resolution: slotResolution,
       duration: slotDuration,
+      musicUrl,
     } = body;
 
     let taskId: string;
@@ -210,7 +216,8 @@ export async function POST(req: NextRequest) {
         promptOverride + CROSS_DISCOVERY_PROMPT_NATIVE_ENDING_SUFFIX,
         refs,
         resolution,
-        duration
+        duration,
+        musicUrl
       );
     } else {
       // Default generation — canonical prompt from cross-prompt.ts

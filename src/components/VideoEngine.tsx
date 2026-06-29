@@ -409,6 +409,9 @@ export default function VideoEngine({
   const [postInstagram, setPostInstagram] = useState(
     initialSettings.instagramEnabled
   );
+  const [postFacebook, setPostFacebook] = useState(
+    initialSettings.facebookEnabled
+  );
   const [postTiktok, setPostTiktok] = useState(initialSettings.tiktokEnabled);
   const [postYoutube, setPostYoutube] = useState(
     initialSettings.youtubeEnabled
@@ -507,6 +510,7 @@ export default function VideoEngine({
           autoPostEnabled: autoPost,
           manualPostEnabled: manualPost,
           instagramEnabled: postInstagram,
+          facebookEnabled: postFacebook,
           tiktokEnabled: postTiktok,
           youtubeEnabled: postYoutube,
           postsPerDay,
@@ -639,6 +643,7 @@ export default function VideoEngine({
       // autoPost is for the scheduled daily engine only — not used here.
       const enabledPlatforms: string[] = [];
       if (manualPost && postInstagram) enabledPlatforms.push("instagram");
+      if (manualPost && postFacebook) enabledPlatforms.push("facebook");
       if (manualPost && postTiktok) enabledPlatforms.push("tiktok");
       if (manualPost && postYoutube) enabledPlatforms.push("youtube");
 
@@ -1070,6 +1075,12 @@ export default function VideoEngine({
                 label: "Instagram",
                 checked: postInstagram,
                 set: setPostInstagram,
+              },
+              {
+                key: "facebook",
+                label: "Facebook",
+                checked: postFacebook,
+                set: setPostFacebook,
               },
               {
                 key: "tiktok",

@@ -35,19 +35,24 @@ export interface Reel {
   status: ReelStatus;
   blotato_status: string | null;
   instagram_enabled: boolean;
+  facebook_enabled: boolean;
   tiktok_enabled: boolean;
   youtube_enabled: boolean;
   instagram_post_submission_id: string | null;
+  facebook_post_submission_id: string | null;
   tiktok_post_submission_id: string | null;
   youtube_post_submission_id: string | null;
   // Per-platform posting detail (status, public URL, error)
   instagram_post_status: string | null;
+  facebook_post_status: string | null;
   tiktok_post_status: string | null;
   youtube_post_status: string | null;
   instagram_post_url: string | null;
+  facebook_post_url: string | null;
   tiktok_post_url: string | null;
   youtube_post_url: string | null;
   instagram_error: string | null;
+  facebook_error: string | null;
   tiktok_error: string | null;
   youtube_error: string | null;
   error_message: string | null;
@@ -127,18 +132,23 @@ export async function createReel(data: CreateReelInput): Promise<Reel> {
     status: data.status,
     blotato_status: data.blotato_status ?? null,
     instagram_enabled: data.instagram_enabled ?? false,
+    facebook_enabled: data.facebook_enabled ?? false,
     tiktok_enabled: data.tiktok_enabled ?? false,
     youtube_enabled: data.youtube_enabled ?? false,
     instagram_post_submission_id: data.instagram_post_submission_id ?? null,
+    facebook_post_submission_id: data.facebook_post_submission_id ?? null,
     tiktok_post_submission_id: data.tiktok_post_submission_id ?? null,
     youtube_post_submission_id: data.youtube_post_submission_id ?? null,
     instagram_post_status: data.instagram_post_status ?? null,
+    facebook_post_status: data.facebook_post_status ?? null,
     tiktok_post_status: data.tiktok_post_status ?? null,
     youtube_post_status: data.youtube_post_status ?? null,
     instagram_post_url: data.instagram_post_url ?? null,
+    facebook_post_url: data.facebook_post_url ?? null,
     tiktok_post_url: data.tiktok_post_url ?? null,
     youtube_post_url: data.youtube_post_url ?? null,
     instagram_error: data.instagram_error ?? null,
+    facebook_error: data.facebook_error ?? null,
     tiktok_error: data.tiktok_error ?? null,
     youtube_error: data.youtube_error ?? null,
     error_message: data.error_message ?? null,

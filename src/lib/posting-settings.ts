@@ -23,6 +23,7 @@ export interface PostingSettings {
    */
   manualPostEnabled: boolean;
   instagramEnabled: boolean;
+  facebookEnabled: boolean;
   tiktokEnabled: boolean;
   youtubeEnabled: boolean;
   postsPerDay: number;
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS: PostingSettings = {
   autoPostEnabled: false,
   manualPostEnabled: false,
   instagramEnabled: true,
+  facebookEnabled: true,
   tiktokEnabled: true,
   youtubeEnabled: true,
   postsPerDay: 3,
@@ -52,6 +54,7 @@ interface DbRow {
   auto_post_enabled: boolean;
   manual_post_enabled: boolean;
   instagram_enabled: boolean;
+  facebook_enabled: boolean;
   tiktok_enabled: boolean;
   youtube_enabled: boolean;
   posts_per_day: number;
@@ -64,6 +67,7 @@ type DbUpdate = {
   auto_post_enabled?: boolean;
   manual_post_enabled?: boolean;
   instagram_enabled?: boolean;
+  facebook_enabled?: boolean;
   tiktok_enabled?: boolean;
   youtube_enabled?: boolean;
   posts_per_day?: number;
@@ -97,6 +101,7 @@ function rowToSettings(row: DbRow): PostingSettings {
     autoPostEnabled: row.auto_post_enabled,
     manualPostEnabled: row.manual_post_enabled ?? false,
     instagramEnabled: row.instagram_enabled,
+    facebookEnabled: row.facebook_enabled ?? true,
     tiktokEnabled: row.tiktok_enabled,
     youtubeEnabled: row.youtube_enabled,
     postsPerDay: row.posts_per_day,
@@ -176,6 +181,8 @@ export async function updatePostingSettings(
     updates.manual_post_enabled = settings.manualPostEnabled;
   if (settings.instagramEnabled !== undefined)
     updates.instagram_enabled = settings.instagramEnabled;
+  if (settings.facebookEnabled !== undefined)
+    updates.facebook_enabled = settings.facebookEnabled;
   if (settings.tiktokEnabled !== undefined)
     updates.tiktok_enabled = settings.tiktokEnabled;
   if (settings.youtubeEnabled !== undefined)

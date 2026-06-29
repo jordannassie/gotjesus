@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import type { ContentSlot, SlotImage } from "@/lib/content-slots";
+import type { ContentSlot, SlotImage, SlotMusic } from "@/lib/content-slots";
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type GenStatus = "idle" | "submitting" | "generating" | "saving" | "done" | "error";
@@ -49,30 +49,57 @@ function mergeImages(dbImages: SlotImage[], local: SlotImage[]): SlotImage[] {
 }
 
 /**
- * Build an enhanced Seedance prompt that prepends a reference image guide.
+ * Build an enhanced Seedance prompt that prepends a reference image guide,
+ * and an audio guide when @music1 is present.
  * The user's prompt textarea is not changed — this is built internally on Generate Test.
  */
-function buildEnhancedPrompt(promptText: string, images: SlotImage[]): string {
+function buildEnhancedPrompt(
+  promptText: string,
+  images: SlotImage[],
+  music?: SlotMusic | null
+): string {
   const tagged = images.filter(
     (img) => img.tag?.startsWith("@") && (img.info?.trim() || img.name)
   );
-  if (tagged.length === 0) return promptText;
+  const hasImages = tagged.length > 0;
+  const hasMusic = Boolean(music?.url);
 
-  const guide = tagged.map((img) => `${img.tag} = ${img.info?.trim() || img.name}`).join("\n");
+  if (!hasImages && !hasMusic) return promptText;
 
-  return [
-    "Reference images:",
-    guide,
-    "",
-    "User prompt:",
-    promptText,
-    "",
-    "Rules:",
+  const parts: string[] = [];
+
+  if (hasImages) {
+    const guide = tagged.map((img) => `${img.tag} = ${img.info?.trim() || img.name}`).join("\n");
+    parts.push("Reference images:", guide, "");
+  }
+
+  if (hasMusic) {
+    const musicLabel = music!.info?.trim() || music!.name;
+    parts.push(
+      "Reference music:",
+      `${music!.tag ?? "@music1"} = ${musicLabel}`,
+      ""
+    );
+  }
+
+  parts.push("User prompt:", promptText, "", "Rules:");
+  parts.push(
     "- Preserve product/reference images exactly.",
     "- Do not invent logos, text, captions, or extra graphics.",
     "- No captions, no subtitles, no text overlays, no extra words on screen.",
-    "- Do not alter product design.",
-  ].join("\n");
+    "- Do not alter product design."
+  );
+
+  if (hasMusic) {
+    parts.push(
+      `- Use ${music!.tag ?? "@music1"} as the exact soundtrack.`,
+      "- Do not generate voiceover, talking, narration, captions, or subtitles.",
+      "- Do not create extra AI music.",
+      "- Final video audio must be the uploaded @music1 song only."
+    );
+  }
+
+  return parts.join("\n");
 }
 
 // No client-side aspect ratio validation on reference images.
@@ -104,6 +131,15 @@ export default function ContentSlotCard({
       info: img.info ?? "",
     }))
   );
+
+  // Music: init from DB
+  const [music, setMusic] = useState<SlotMusic | null>(slot.referenceMusic ?? null);
+  const [musicTag, setMusicTag] = useState<string>(slot.referenceMusic?.tag ?? "@music1");
+  const [musicInfo, setMusicInfo] = useState<string>(slot.referenceMusic?.info ?? "Got Jesus song");
+  const [uploadingMusic, setUploadingMusic] = useState(false);
+  const [musicUploadError, setMusicUploadError] = useState("");
+  const [removingMusic, setRemovingMusic] = useState(false);
+  const musicInputRef = useRef<HTMLInputElement>(null);
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [promptCopied, setPromptCopied] = useState(false);
@@ -178,6 +214,7 @@ export default function ContentSlotCard({
           aspectRatio: "9:16",
           resolution,
           referenceImages: images, // persist tag/info edits
+          referenceMusic: music ? { ...music, tag: musicTag, info: musicInfo } : null,
         }),
       });
       const data = (await res.json()) as ContentSlot & { error?: string };
@@ -189,7 +226,7 @@ export default function ContentSlotCard({
       setSaveError(err instanceof Error ? err.message : "Save failed.");
       setSaveStatus("error");
     }
-  }, [slot.id, slotName, promptText, postCaption, enabled, scheduledTime, duration, resolution, images, onSlotUpdate]);
+  }, [slot.id, slotName, promptText, postCaption, enabled, scheduledTime, duration, resolution, images, music, musicTag, musicInfo, onSlotUpdate]);
 
   // Toggle enabled and immediately persist
   const handleToggleEnabled = useCallback(async () => {
@@ -269,6 +306,53 @@ export default function ContentSlotCard({
     }
   }, [slot.id, images, onSlotUpdate]);
 
+  // ── Music upload ──────────────────────────────────────────────────────────
+
+  const handleMusicFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setUploadingMusic(true);
+    setMusicUploadError("");
+    try {
+      const form = new FormData();
+      form.append("slotId", slot.id);
+      form.append("file", file);
+      const res = await fetch("/api/content-slots/music", { method: "POST", body: form });
+      const data = (await res.json()) as ContentSlot & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      const newMusic = data.referenceMusic ?? null;
+      setMusic(newMusic);
+      setMusicTag(newMusic?.tag ?? "@music1");
+      setMusicInfo(newMusic?.info ?? "Got Jesus song");
+      onSlotUpdate(data);
+    } catch (err) {
+      setMusicUploadError(err instanceof Error ? err.message : "Music upload failed.");
+    } finally {
+      setUploadingMusic(false);
+    }
+  }, [slot.id, onSlotUpdate]);
+
+  const handleRemoveMusic = useCallback(async () => {
+    if (!music) return;
+    setRemovingMusic(true);
+    try {
+      const res = await fetch("/api/content-slots/music", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slotId: slot.id, path: music.path }),
+      });
+      const data = (await res.json()) as ContentSlot & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setMusic(null);
+      setMusicTag("@music1");
+      setMusicInfo("Got Jesus song");
+      onSlotUpdate(data);
+    } catch { /* ignore */ } finally {
+      setRemovingMusic(false);
+    }
+  }, [slot.id, music, onSlotUpdate]);
+
   // ── Generate test ─────────────────────────────────────────────────────────
 
   const stopGenPoll = useCallback(() => {
@@ -299,8 +383,9 @@ export default function ContentSlotCard({
     setGenStatus("submitting"); setGenError(""); setTestVideoUrl(null); setShowTestVideo(false);
     genPollCount.current = 0;
 
-    // Build enhanced prompt with reference image guide (user textarea is not changed)
-    const enhancedPrompt = buildEnhancedPrompt(promptText, images);
+    // Build enhanced prompt with reference image and music guides (user textarea not changed)
+    const currentMusic = music ? { ...music, tag: musicTag, info: musicInfo } : null;
+    const enhancedPrompt = buildEnhancedPrompt(promptText, images, currentMusic);
 
     try {
       const res = await fetch("/api/generate-video", {
@@ -312,6 +397,7 @@ export default function ContentSlotCard({
           slotKey: slot.slotKey,
           resolution,
           duration,
+          ...(currentMusic?.url ? { musicUrl: currentMusic.url } : {}),
           // aspectRatio omitted — locked to "9:16" server-side
         }),
       });
@@ -333,6 +419,7 @@ export default function ContentSlotCard({
                 contentSlotName: slotName,
                 postCaption: postCaption || undefined,
                 workspaceKey: slot.workspaceKey,
+                ...(currentMusic?.url ? { musicUrl: currentMusic.url } : {}),
               }),
             });
           } catch { /* non-fatal */ }
@@ -345,7 +432,7 @@ export default function ContentSlotCard({
     } catch (err) {
       setGenStatus("error"); setGenError(err instanceof Error ? err.message : "Submit error.");
     }
-  }, [promptText, postCaption, images, slot.slotKey, slotName, resolution, duration, pollGen, stopGenPoll]);
+  }, [promptText, postCaption, images, music, musicTag, musicInfo, slot.slotKey, slotName, resolution, duration, pollGen, stopGenPoll]);
 
   const genRunning = ["submitting", "generating", "saving"].includes(genStatus);
   const genLabel =
@@ -562,6 +649,94 @@ export default function ContentSlotCard({
             </button>
           </div>
           {uploadError && <span className="text-[11px] text-red-400">{uploadError}</span>}
+          <p className="text-[10px] text-neutral-700 leading-relaxed">
+            Upload images as{" "}
+            <span className="font-mono text-neutral-600">@product1</span>,{" "}
+            <span className="font-mono text-neutral-600">@model1</span>, or{" "}
+            <span className="font-mono text-neutral-600">@brandcard</span>.{" "}
+            Upload one song as{" "}
+            <span className="font-mono text-neutral-600">@music1</span>.{" "}
+            When <span className="font-mono text-neutral-600">@music1</span> is uploaded, the app replaces all generated audio with that song.
+          </p>
+        </div>
+
+        {/* ── Music upload (@music1) ────────────────────────────────────────── */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-600">Music</span>
+            {music && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded font-mono bg-purple-900/40 text-purple-400 border border-purple-800">@music1</span>
+            )}
+          </div>
+
+          {music && (
+            <div className="flex items-start gap-2.5 bg-neutral-900 border border-purple-900/40 rounded-xl p-2.5">
+              {/* Music icon */}
+              <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-purple-900/30 border border-purple-800/40 flex-shrink-0">
+                <svg className="w-5 h-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
+                </svg>
+              </div>
+
+              {/* Tag + Info inputs */}
+              <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                <input
+                  type="text"
+                  value={musicTag}
+                  onChange={(e) => setMusicTag(e.target.value.trim().startsWith("@") ? e.target.value.trim() : `@${e.target.value.trim()}`)}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[11px] text-purple-300 placeholder-neutral-600 outline-none focus:border-purple-700 font-mono"
+                  placeholder="@music1"
+                />
+                <input
+                  type="text"
+                  value={musicInfo}
+                  onChange={(e) => setMusicInfo(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-[11px] text-neutral-400 placeholder-neutral-700 outline-none focus:border-neutral-500"
+                  placeholder="Describe this song… e.g. Got Jesus song"
+                />
+                <span className="text-[9px] text-neutral-700 truncate">{music.name}</span>
+              </div>
+
+              {/* Remove */}
+              <button
+                type="button"
+                onClick={() => void handleRemoveMusic()}
+                disabled={removingMusic}
+                className="text-neutral-700 hover:text-red-400 transition-colors text-sm leading-none flex-shrink-0 mt-1"
+                title="Remove music"
+              >
+                {removingMusic ? "…" : "×"}
+              </button>
+            </div>
+          )}
+
+          {/* Upload / Replace button */}
+          <div className="flex items-center gap-2">
+            <input
+              ref={musicInputRef}
+              type="file"
+              accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/aac,audio/ogg"
+              className="hidden"
+              onChange={handleMusicFileChange}
+            />
+            <button
+              type="button"
+              onClick={() => musicInputRef.current?.click()}
+              disabled={uploadingMusic}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-purple-900 text-[11px] text-purple-600 hover:text-purple-400 hover:border-purple-700 transition-colors disabled:opacity-50"
+            >
+              {uploadingMusic
+                ? <><span className="w-2.5 h-2.5 rounded-full animate-spin inline-block" style={{ border: "2px solid #a855f722", borderTopColor: "#a855f7" }} /> Uploading…</>
+                : <>
+                    <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
+                    </svg>
+                    {music ? "Replace Music" : "Add Music"}
+                  </>
+              }
+            </button>
+          </div>
+          {musicUploadError && <span className="text-[11px] text-red-400">{musicUploadError}</span>}
         </div>
 
         {/* ── Prompt textarea ───────────────────────────────────────────────── */}
@@ -604,6 +779,12 @@ export default function ContentSlotCard({
             <span className="font-mono text-neutral-600">@model1</span>, or{" "}
             <span className="font-mono text-neutral-600">@logo</span>{" "}
             in your prompt so Seedance knows which reference image to use.
+            {music && (
+              <> Use{" "}
+                <span className="font-mono text-purple-700">@music1</span>{" "}
+                to reference the uploaded song — it will replace all generated audio in the final video.
+              </>
+            )}
           </p>
         </div>
 
